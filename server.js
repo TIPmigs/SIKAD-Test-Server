@@ -12,7 +12,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ✅ Replace with your actual Firebase Realtime DB endpoint
 // Example: https://<project-id>.firebaseio.com/gps.json
-const FIREBASE_URL = "https://your-project-id.firebaseio.com/gps.json";
+const FIREBASE_URL = "https://cit306-finalproject-default-rtdb.firebaseio.com/";
 
 // In-memory log (useful for testing before DB integration)
 let gpsLogs = [];
@@ -64,5 +64,5 @@ app.get("/", (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`🌐 Public URL via ngrok: https://f7fa03034df4.ngrok-free.app`);
+  console.log(`🌐 Public URL via ngrok: https://6767c03ccc73.ngrok-free.app`);
 });
