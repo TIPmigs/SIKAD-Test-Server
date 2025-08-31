@@ -4,16 +4,16 @@ import bodyParser from "body-parser";
 import fetch from "node-fetch"; // for forwarding to Firebase
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // must match ngrok's localhost:10000
 
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ✅ Firebase Realtime DB endpoint (fixed)
+// ✅ Firebase Realtime DB endpoint
 const FIREBASE_URL = "https://cit306-finalproject-default-rtdb.firebaseio.com/gps.json";
 
-// In-memory log (useful for testing before DB integration)
+// In-memory log (useful for testing/debugging)
 let gpsLogs = [];
 
 // 📡 Endpoint to receive GPS data from SIM800L
@@ -21,7 +21,7 @@ app.post("/gps", async (req, res) => {
   const { latitude, longitude } = req.body;
 
   if (!latitude || !longitude) {
-    console.log("❌ Bad data received:", req.body); // <-- helpful debug log
+    console.log("❌ Bad data received:", req.body);
     return res.status(400).json({ error: "Invalid GPS data" });
   }
 
@@ -56,13 +56,13 @@ app.post("/gps", async (req, res) => {
   res.json({ status: "OK", saved: entry });
 });
 
-// ✅ Health check (useful for testing ngrok link)
+// ✅ Health check
 app.get("/", (req, res) => {
-  res.send("🌍 GPS Server is running and ready to receive data!");
+  res.send("🌍 GPS Server is running and ready to receive data! NIGGER");
 });
 
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`🌐 Public URL via ngrok: https://57a760df7eb7.ngrok-free.app`);
+  console.log(`🌐 Public URL via ngrok: http://a1bf920e1ba3.ngrok-free.app`);
 });
