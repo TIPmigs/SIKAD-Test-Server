@@ -10,8 +10,8 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ✅ Firebase Realtime DB endpoint
-const FIREBASE_URL = "https://cit306-finalproject-default-rtdb.firebaseio.com/";
+// ✅ Firebase Realtime DB endpoint (fixed)
+const FIREBASE_URL = "https://cit306-finalproject-default-rtdb.firebaseio.com/gps.json";
 
 // In-memory log (useful for testing before DB integration)
 let gpsLogs = [];
@@ -21,6 +21,7 @@ app.post("/gps", async (req, res) => {
   const { latitude, longitude } = req.body;
 
   if (!latitude || !longitude) {
+    console.log("❌ Bad data received:", req.body); // <-- helpful debug log
     return res.status(400).json({ error: "Invalid GPS data" });
   }
 
