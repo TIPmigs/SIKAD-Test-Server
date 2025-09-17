@@ -1,17 +1,11 @@
-// server.js
-import express from "express";
-import bodyParser from "body-parser";
-import admin from "firebase-admin";
-import fs from "fs";
-import mqtt from "mqtt";
-
-const app = express();
-const PORT = process.env.PORT || 80;
+const mqtt = require("mqtt");
+const admin = require("firebase-admin");
+const fs = require("fs");
+const express = require("express");
+const bodyParser = require("body-parser");
 
 // ========== Firebase Setup ==========
-const serviceAccount = JSON.parse(
-  fs.readFileSync("./firebase-key.json", "utf-8")
-);
+const serviceAccount = JSON.parse(fs.readFileSync("./firebase-key.json", "utf-8"));
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -21,86 +15,60 @@ admin.initializeApp({
 const db = admin.database();
 const gpsRef = db.ref("gpsData");
 
-let latestData = null;
+// ========== HiveMQ Setup ==========
+const options = {
+  host: "8cc8aa8a96bb432a8176c3457b76204c.s1.eu.hivemq.cloud",
+  port: 8883,
+  protocol: "mqtts",
+  username: "esp32-client",
+  password: "SikadRocks19!"
+};
 
-// Middleware
-app.use(bodyParser.json());
-
-// ========== Old HTTP Endpoint (still works for fallback) ==========
-app.post("/gps", async (req, res) => {
-  try {
-    const { latitude, longitude } = req.body;
-    if (!latitude || !longitude) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
-    }
-
-    const gpsData = {
-      created_at: new Date().toISOString(),
-      latitude,
-      longitude
-    };
-
-    await gpsRef.set(gpsData);
-    latestData = gpsData;
-
-    console.log("✅ GPS Data received via HTTP -> Firebase:", gpsData);
-    res.json({ success: true, message: "Data stored", data: gpsData });
-  } catch (error) {
-    console.error("❌ Error saving GPS data:", error.message);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ========== MQTT Subscriber ==========
-const brokerUrl = "mqtt://broker.hivemq.com:1883";
-const client = mqtt.connect(brokerUrl, {
-  clientId: "server_" + Math.random().toString(16).slice(2)
-});
+const client = mqtt.connect(options);
 
 client.on("connect", () => {
-  console.log("✅ Connected to MQTT broker");
-  // subscribe to all bikes: sikad/+/gps
-  client.subscribe("sikad/+/gps", (err) => {
-    if (err) console.error("❌ Subscribe failed:", err);
-    else console.log("📡 Subscribed to topic: sikad/+/gps");
+  console.log("✅ Connected to HiveMQ");
+  client.subscribe("esp32/gps", (err) => {
+    if (!err) console.log("📡 Subscribed to esp32/gps");
   });
 });
 
 client.on("message", async (topic, message) => {
+  const payload = message.toString();
+  console.log("📩 Received:", payload);
+
   try {
-    const payload = JSON.parse(message.toString());
-    const { latitude, longitude } = payload;
-
-    if (!latitude || !longitude) {
-      console.warn("⚠️ Invalid payload:", payload);
-      return;
-    }
-
+    const data = JSON.parse(payload);
     const gpsData = {
       created_at: new Date().toISOString(),
-      latitude,
-      longitude,
-      topic
+      latitude: data.latitude,
+      longitude: data.longitude
     };
 
+    // Push to Firebase
     await gpsRef.set(gpsData);
-    latestData = gpsData;
-
-    console.log("✅ GPS via MQTT -> Firebase:", gpsData);
-  } catch (error) {
-    console.error("❌ Error processing MQTT message:", error);
+    console.log("✅ Saved to Firebase:", gpsData);
+  } catch (err) {
+    console.error("❌ Failed to process message:", err.message);
   }
 });
 
-// ========== Client API ==========
-app.get("/latest-data", (req, res) => {
-  if (latestData) {
-    res.json({ success: true, data: latestData });
-  } else {
-    res.json({ success: false, message: "No data available yet." });
-  }
+// ========== Express Setup ==========
+const app = express();
+app.use(bodyParser.json());
+
+// Payment success webhook
+app.post("/payment-success", (req, res) => {
+  console.log("💰 Payment authorized:", req.body);
+
+  // Publish downlink to ESP32
+  client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
+  console.log("📡 Downlink sent: PAYMENT_OK");
+
+  res.json({ status: "ok", message: "Command sent to ESP32" });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
