@@ -1,11 +1,13 @@
-const mqtt = require("mqtt");
-const admin = require("firebase-admin");
-const fs = require("fs");
-const express = require("express");
-const bodyParser = require("body-parser");
+// server.js (ESM version)
+import mqtt from "mqtt";
+import admin from "firebase-admin";
+import fs from "fs";
+import express from "express";
 
 // ========== Firebase Setup ==========
-const serviceAccount = JSON.parse(fs.readFileSync("./firebase-key.json", "utf-8"));
+const serviceAccount = JSON.parse(
+  fs.readFileSync("./firebase-key.json", "utf-8")
+);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -53,22 +55,25 @@ client.on("message", async (topic, message) => {
   }
 });
 
-// ========== Express Setup ==========
+// ========== Express API for Downlink ==========
 const app = express();
-app.use(bodyParser.json());
+const PORT = process.env.PORT || 3000;
 
-// Payment success webhook
-app.post("/payment-success", (req, res) => {
-  console.log("💰 Payment authorized:", req.body);
+app.use(express.json());
 
-  // Publish downlink to ESP32
-  client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
-  console.log("📡 Downlink sent: PAYMENT_OK");
-
-  res.json({ status: "ok", message: "Command sent to ESP32" });
+// Endpoint to trigger ESP32 downlink (LED blink 10s)
+app.post("/blink", (req, res) => {
+  client.publish("esp32/cmd", "BLINK");
+  console.log("⬇️ Sent downlink command: BLINK");
+  res.json({ success: true, message: "Blink command sent to ESP32" });
 });
 
-const PORT = process.env.PORT || 3000;
+// Health check
+app.get("/", (req, res) => {
+  res.send("✅ Node.js MQTT server is running.");
+});
+
+// Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
