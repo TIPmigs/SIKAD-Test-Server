@@ -4,14 +4,11 @@ import admin from "firebase-admin";
 import fs from "fs";
 import express from "express";
 
-// ========== Firebase Setup ==========
-const serviceAccount = JSON.parse(
-  fs.readFileSync("./firebase-key.json", "utf-8")
-);
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: "https://cit306-finalproject-default-rtdb.firebaseio.com/"
+  databaseURL: "https://cit306-finalproject-default-rtdb.firebaseio.com/",
 });
 
 const db = admin.database();
