@@ -70,21 +70,23 @@ app.get("/generate-token", (req, res) => {
   res.json({ token });
 });
 
-// Endpoint triggered by PayMongo redirect
+// Inside your /success endpoint
 app.get("/success", (req, res) => {
   const token = req.query.token;
-  if (!token || !tokens[token]) return res.status(403).send("Invalid or expired token");
-  if (Date.now() > tokens[token]) {
-    delete tokens[token];
-    return res.status(403).send("Token expired");
+
+  if (!token || !tokens[token]) {
+    return res.status(400).send("Invalid token.");
   }
 
-  // Valid token → trigger blink
+  // Send blink command
   client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
-  console.log("⬇️ Sent downlink command: BLINK");
+  console.log("⬇️ Sent BLINK command");
 
-  delete tokens[token]; // enforce one-time use
-  res.send("<h1>✅ Payment successful. Blink command sent.</h1>");
+  delete tokens[token]; // prevent reuse
+
+  // Redirect to app
+  const redirectUrl = `myapp://main?payment_status=success&token=${token}`;
+  res.redirect(redirectUrl);
 });
 
 // Health check
