@@ -114,7 +114,7 @@ app.get("/payment-success", (req, res) => {
   // Invalidate token (one-time use)
   delete tokenStore[token];
 
-  // Return HTML page with robust Android intent redirect
+  // Return HTML page for WebView (no intent://)
   res.send(`
     <html>
       <head>
@@ -122,7 +122,8 @@ app.get("/payment-success", (req, res) => {
         <meta charset="utf-8">
         <script>
           setTimeout(() => {
-            window.location.href = "intent://payment-success#Intent;scheme=sikad;package=com.example.finalprojectmobilecomputing;end";
+            // Navigate to a simple HTTPS URL handled by the WebView
+            window.location.href = "/payment-done?token=${token}";
           }, 2000);
         </script>
       </head>
@@ -130,6 +131,19 @@ app.get("/payment-success", (req, res) => {
         <h1>✅ Payment Successful!</h1>
         <p>The ESP32 has received the blink command.</p>
         <p>Returning to the app shortly…</p>
+      </body>
+    </html>
+  `);
+});
+
+// Endpoint your WebView can catch
+app.get("/payment-done", (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Done</title></head>
+      <body>
+        <h1>Payment completed successfully!</h1>
+        <p>You can now return to the app.</p>
       </body>
     </html>
   `);
