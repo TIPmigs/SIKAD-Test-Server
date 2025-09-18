@@ -1,9 +1,9 @@
 // server.js (ESM version)
 import mqtt from "mqtt";
 import admin from "firebase-admin";
-import fs from "fs";
 import express from "express";
 
+// ========== Firebase Setup ==========
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
 
 admin.initializeApp({
@@ -52,13 +52,34 @@ client.on("message", async (topic, message) => {
   }
 });
 
-// ========== Express API for Downlink ==========
+// ========== Express Setup ==========
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Webhook must be raw (PayMongo requirement)
+app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  try {
+    const event = JSON.parse(req.body.toString());
+    console.log("📩 Webhook received:", event.type);
+
+    if (event.type === "payment.paid") {
+      client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
+      console.log("✅ Payment successful → Blink command sent!");
+    } else if (event.type === "payment.failed") {
+      console.log("❌ Payment failed");
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("Webhook error:", err.message);
+    res.sendStatus(400);
+  }
+});
+
+// JSON middleware AFTER webhook
 app.use(express.json());
 
-// Endpoint to trigger ESP32 downlink (LED blink 10s)
+// Endpoint to trigger ESP32 downlink manually
 app.post("/blink", (req, res) => {
   client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
   console.log("⬇️ Sent downlink command: BLINK");
