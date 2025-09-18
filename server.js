@@ -59,21 +59,31 @@ const PORT = process.env.PORT || 3000;
 // Webhook must be raw (PayMongo requirement)
 app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
   try {
-    const event = JSON.parse(req.body.toString());
-    const eventType = event?.data?.attributes?.type;
+    // Log raw body first
+    console.log("📩 Raw webhook body:", req.body.toString());
 
-    console.log("📩 Webhook received:", eventType);
+    const event = JSON.parse(req.body.toString());
+
+    // Log the full parsed object
+    console.log("📩 Parsed webhook object:", JSON.stringify(event, null, 2));
+
+    // Try to extract event type
+    const eventType = event?.data?.attributes?.type || event?.type || "undefined";
+    console.log("📩 Webhook event type detected:", eventType);
 
     if (eventType === "payment.paid") {
       client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
       console.log("✅ Payment successful → Blink command sent!");
     } else if (eventType === "payment.failed") {
       console.log("❌ Payment failed");
+    } else {
+      console.log("⚠️ Unknown or unsupported webhook event type");
     }
 
+    // Always respond 200 to acknowledge receipt
     res.sendStatus(200);
   } catch (err) {
-    console.error("Webhook error:", err.message);
+    console.error("❌ Webhook error:", err.message);
     res.sendStatus(400);
   }
 });
