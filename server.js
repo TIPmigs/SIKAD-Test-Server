@@ -1,13 +1,9 @@
 // server.js (ESM version)
 import mqtt from "mqtt";
 import admin from "firebase-admin";
+import fs from "fs";
 import express from "express";
-import crypto from "crypto";
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// ========== Firebase Setup ==========
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
 
 admin.initializeApp({
@@ -31,7 +27,7 @@ const client = mqtt.connect(options);
 
 client.on("connect", () => {
   console.log("✅ Connected to HiveMQ");
-  client.subscribe("esp32/gps", err => {
+  client.subscribe("esp32/gps", (err) => {
     if (!err) console.log("📡 Subscribed to esp32/gps");
   });
 });
@@ -47,6 +43,8 @@ client.on("message", async (topic, message) => {
       latitude: data.latitude,
       longitude: data.longitude
     };
+
+    // Push to Firebase
     await gpsRef.set(gpsData);
     console.log("✅ Saved to Firebase:", gpsData);
   } catch (err) {
@@ -54,117 +52,25 @@ client.on("message", async (topic, message) => {
   }
 });
 
-// ========== Express Setup ==========
+// ========== Express API for Downlink ==========
+const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(express.json());
 
-// ===== In-memory token store =====
-const tokenStore = {}; // { token: expirationTimestamp }
-const TOKEN_TTL_MS = 2 * 60 * 1000; // 2 minutes
-
-// Generate a one-time token
-app.get("/generate-token", (req, res) => {
-  const token = crypto.randomBytes(16).toString("hex");
-  const expires = Date.now() + TOKEN_TTL_MS;
-  tokenStore[token] = expires;
-
-  console.log(`🗝️ Generated token: ${token} (expires in 2 min)`);
-  res.json({ token });
-});
-
-// Webhook must be raw (PayMongo requirement)
-app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
-  try {
-    const event = JSON.parse(req.body.toString());
-    const eventType = event?.data?.attributes?.type || event?.type || "undefined";
-
-    console.log("📩 Webhook event type:", eventType);
-
-    if (eventType === "payment.paid") {
-      client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
-      console.log("✅ Payment successful → Blink command sent!");
-    }
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("❌ Webhook error:", err.message);
-    res.sendStatus(400);
-  }
-});
-
-// Trigger ESP32 downlink manually
+// Endpoint to trigger ESP32 downlink (LED blink 10s)
 app.post("/blink", (req, res) => {
   client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
   console.log("⬇️ Sent downlink command: BLINK");
   res.json({ success: true, message: "Blink command sent to ESP32" });
 });
 
-// Payment success endpoint (validates one-time token)
-app.get("/payment-success", (req, res) => {
-  const token = req.query.token;
-  if (!token) return res.status(400).send("Missing token");
-
-  const expires = tokenStore[token];
-  if (!expires || Date.now() > expires) {
-    return res.status(400).send("Invalid or expired token");
-  }
-
-  // Token is valid → send blink command
-  client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
-  console.log(`✅ Blink command sent for token: ${token}`);
-
-  // Invalidate token (one-time use)
-  delete tokenStore[token];
-
-  // Return HTML page for WebView (no intent://)
-  res.send(`
-    <html>
-      <head>
-        <title>Payment Successful</title>
-        <meta charset="utf-8">
-        <script>
-          setTimeout(() => {
-            // Navigate to a simple HTTPS URL handled by the WebView
-            window.location.href = "/payment-done?token=${token}";
-          }, 2000);
-        </script>
-      </head>
-      <body>
-        <h1>✅ Payment Successful!</h1>
-        <p>The ESP32 has received the blink command.</p>
-        <p>Returning to the app shortly…</p>
-      </body>
-    </html>
-  `);
-});
-
-// Endpoint your WebView can catch
-app.get("/payment-done", (req, res) => {
-  res.send(`
-    <html>
-      <head><title>Done</title></head>
-      <body>
-        <h1>Payment completed successfully!</h1>
-        <p>You can now return to the app.</p>
-      </body>
-    </html>
-  `);
-});
-
-// Payment failed endpoint
-app.get("/payment-failed", (req, res) => {
-  res.send(`
-    <html>
-      <head><title>Payment Failed</title></head>
-      <body>
-        <h1>❌ Payment Failed</h1>
-        <p>Please try again.</p>
-      </body>
-    </html>
-  `);
-});
-
 // Health check
-app.get("/", (req, res) => res.send("✅ Node.js MQTT server is running."));
+app.get("/", (req, res) => {
+  res.send("✅ Node.js MQTT server is running.");
+});
 
+// Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
