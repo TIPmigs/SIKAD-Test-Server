@@ -117,10 +117,21 @@ app.get("/payment-success", (req, res) => {
   // Return simple HTML page
   res.send(`
     <html>
-      <head><title>Payment Successful</title></head>
+      <head>
+        <title>Payment Successful</title>
+        <meta charset="utf-8">
+        <script>
+          // After 2 seconds, try to go back to the app using a custom URL scheme
+          setTimeout(() => {
+            // Replace 'sikad://payment-success' with your app's intent URL scheme
+            window.location.href = "sikad://payment-success";
+          }, 2000);
+        </script>
+      </head>
       <body>
         <h1>✅ Payment Successful!</h1>
         <p>The ESP32 has received the blink command.</p>
+        <p>Returning to the app shortly…</p>
       </body>
     </html>
   `);
