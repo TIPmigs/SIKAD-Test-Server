@@ -1,8 +1,8 @@
 // server.js (ESM version)
 import mqtt from "mqtt";
 import admin from "firebase-admin";
-import fs from "fs";
 import express from "express";
+import crypto from "crypto";
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
 
@@ -43,8 +43,6 @@ client.on("message", async (topic, message) => {
       latitude: data.latitude,
       longitude: data.longitude
     };
-
-    // Push to Firebase
     await gpsRef.set(gpsData);
     console.log("✅ Saved to Firebase:", gpsData);
   } catch (err) {
@@ -52,17 +50,41 @@ client.on("message", async (topic, message) => {
   }
 });
 
-// ========== Express API for Downlink ==========
+// ========== Express API ==========
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Endpoint to trigger ESP32 downlink (LED blink 10s)
-app.post("/blink", (req, res) => {
+// ---------- One-time Token Management ----------
+const tokens = {}; // In-memory; use DB in production
+
+function generateToken() {
+  return crypto.randomBytes(16).toString("hex"); // 32-char token
+}
+
+// Endpoint for app to request a token
+app.get("/generate-token", (req, res) => {
+  const token = generateToken();
+  tokens[token] = Date.now() + 5 * 60 * 1000; // 5 min expiry
+  res.json({ token });
+});
+
+// Endpoint triggered by PayMongo redirect
+app.get("/success", (req, res) => {
+  const token = req.query.token;
+  if (!token || !tokens[token]) return res.status(403).send("Invalid or expired token");
+  if (Date.now() > tokens[token]) {
+    delete tokens[token];
+    return res.status(403).send("Token expired");
+  }
+
+  // Valid token → trigger blink
   client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
   console.log("⬇️ Sent downlink command: BLINK");
-  res.json({ success: true, message: "Blink command sent to ESP32" });
+
+  delete tokens[token]; // enforce one-time use
+  res.send("<h1>✅ Payment successful. Blink command sent.</h1>");
 });
 
 // Health check
@@ -70,7 +92,6 @@ app.get("/", (req, res) => {
   res.send("✅ Node.js MQTT server is running.");
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
