@@ -60,12 +60,14 @@ const PORT = process.env.PORT || 3000;
 app.post("/webhook", express.raw({ type: "application/json" }), (req, res) => {
   try {
     const event = JSON.parse(req.body.toString());
-    console.log("📩 Webhook received:", event.type);
+    const eventType = event?.data?.attributes?.type;
 
-    if (event.type === "payment.paid") {
+    console.log("📩 Webhook received:", eventType);
+
+    if (eventType === "payment.paid") {
       client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
       console.log("✅ Payment successful → Blink command sent!");
-    } else if (event.type === "payment.failed") {
+    } else if (eventType === "payment.failed") {
       console.log("❌ Payment failed");
     }
 
