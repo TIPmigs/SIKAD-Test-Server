@@ -114,14 +114,13 @@ app.get("/payment-success", (req, res) => {
   // Invalidate token (one-time use)
   delete tokenStore[token];
 
-  // Return HTML page with robust intent redirect
+  // Return HTML page with robust Android intent redirect
   res.send(`
     <html>
       <head>
         <title>Payment Successful</title>
         <meta charset="utf-8">
         <script>
-          // After 2 seconds, redirect back to your app using Android intent
           setTimeout(() => {
             window.location.href = "intent://payment-success#Intent;scheme=sikad;package=com.example.finalprojectmobilecomputing;end";
           }, 2000);
@@ -136,6 +135,18 @@ app.get("/payment-success", (req, res) => {
   `);
 });
 
+// Payment failed endpoint
+app.get("/payment-failed", (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Payment Failed</title></head>
+      <body>
+        <h1>❌ Payment Failed</h1>
+        <p>Please try again.</p>
+      </body>
+    </html>
+  `);
+});
 
 // Health check
 app.get("/", (req, res) => res.send("✅ Node.js MQTT server is running."));
