@@ -60,9 +60,20 @@ app.use(express.json());
 
 // Endpoint to trigger ESP32 downlink (LED blink 10s)
 app.post("/blink", (req, res) => {
-  client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
-  console.log("⬇️ Sent downlink command: BLINK");
-  res.json({ success: true, message: "Blink command sent to ESP32" });
+  const { token, status } = req.body;
+
+  if (token !== "XYZ123") {
+    console.log("❌ Invalid token, rejected request");
+    return res.status(403).json({ success: false, message: "Invalid token" });
+  }
+
+  if (status === "success") {
+    client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
+    console.log("⬇️ Sent downlink command: BLINK");
+    return res.json({ success: true, message: "Blink command sent to ESP32" });
+  } else {
+    return res.json({ success: false, message: "No blink sent" });
+  }
 });
 
 // Health check
