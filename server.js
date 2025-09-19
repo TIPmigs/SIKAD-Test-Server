@@ -12,8 +12,6 @@ admin.initializeApp({
 });
 
 const rtdb = admin.database();
-const gpsRef = rtdb.ref("gpsData");
-
 const firestore = admin.firestore();
 
 // ========== HiveMQ Setup ==========
@@ -29,24 +27,33 @@ const client = mqtt.connect(options);
 
 client.on("connect", () => {
   console.log("✅ Connected to HiveMQ");
-  client.subscribe("esp32/gps", (err) => {
-    if (!err) console.log("📡 Subscribed to esp32/gps");
+  // subscribe to ALL bikes GPS topics
+  client.subscribe("esp32/gps/#", (err) => {
+    if (!err) console.log("📡 Subscribed to esp32/gps/#");
   });
 });
 
 client.on("message", async (topic, message) => {
   const payload = message.toString();
-  console.log("📩 Received:", payload);
+  console.log(`📩 Received [${topic}]:`, payload);
 
   try {
     const data = JSON.parse(payload);
+
+    // extract bikeId from topic (esp32/gps/bike_001 → bike_001)
+    const parts = topic.split("/");
+    const bikeId = parts[2] || "unknown";
+
     const gpsData = {
       created_at: new Date().toISOString(),
       latitude: data.latitude,
       longitude: data.longitude,
     };
-    await gpsRef.set(gpsData);
-    console.log("✅ Saved to Realtime DB:", gpsData);
+
+    // ✅ Save latest GPS under each bike
+    await rtdb.ref(`gpsData/${bikeId}/latest`).set(gpsData);
+
+    console.log(`✅ Saved GPS for ${bikeId}:`, gpsData);
   } catch (err) {
     console.error("❌ Failed to process message:", err.message);
   }
