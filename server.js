@@ -11,10 +11,10 @@ admin.initializeApp({
   databaseURL: "https://cit306-finalproject-default-rtdb.firebaseio.com/",
 });
 
-const rtdb = admin.database(); // Realtime Database
+const rtdb = admin.database();
 const gpsRef = rtdb.ref("gpsData");
 
-const firestore = admin.firestore(); // Firestore
+const firestore = admin.firestore();
 
 // ========== HiveMQ Setup ==========
 const options = {
@@ -45,7 +45,7 @@ client.on("message", async (topic, message) => {
       latitude: data.latitude,
       longitude: data.longitude,
     };
-    await gpsRef.set(gpsData); // Save to RTDB
+    await gpsRef.set(gpsData);
     console.log("✅ Saved to Realtime DB:", gpsData);
   } catch (err) {
     console.error("❌ Failed to process message:", err.message);
@@ -58,34 +58,49 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// ---------- One-time Token Management (Firestore) ----------
+// ---------- Token Generator ----------
 function generateToken() {
-  return crypto.randomBytes(16).toString("hex"); // 32-char token
+  return crypto.randomBytes(16).toString("hex");
 }
 
-// Generate token → store in Firestore
+// Generate token for bike + QR
 app.get("/generate-token", async (req, res) => {
+  const { bikeId, qrCode } = req.query;
+  if (!bikeId || !qrCode) {
+    return res.status(400).json({ error: "Missing bikeId or qrCode" });
+  }
+
   const token = generateToken();
   const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
 
-  await firestore.collection("tokens").doc(token).set({
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    expiresAt,
-    used: false,
-  });
+  // Save token under bike
+  await firestore
+    .collection("bikes")
+    .doc(bikeId)
+    .collection("tokens")
+    .doc(token)
+    .set({
+      qrCode,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiresAt,
+      used: false,
+    });
 
   res.json({ token });
 });
 
-// Success endpoint
+// Payment success
 app.get("/success", async (req, res) => {
-  const token = req.query.token;
-
-  if (!token) {
-    return res.status(400).send("Missing token.");
+  const { bikeId, qrCode, token } = req.query;
+  if (!bikeId || !qrCode || !token) {
+    return res.status(400).send("Missing bikeId, qrCode, or token.");
   }
 
-  const tokenRef = firestore.collection("tokens").doc(token);
+  const tokenRef = firestore
+    .collection("bikes")
+    .doc(bikeId)
+    .collection("tokens")
+    .doc(token);
   const tokenSnap = await tokenRef.get();
 
   if (!tokenSnap.exists) {
@@ -93,22 +108,33 @@ app.get("/success", async (req, res) => {
   }
 
   const tokenData = tokenSnap.data();
-  if (tokenData.used) {
-    return res.status(400).send("Token already used.");
-  }
-  if (Date.now() > tokenData.expiresAt) {
-    return res.status(400).send("Token expired.");
-  }
+  if (tokenData.used) return res.status(400).send("Token already used.");
+  if (Date.now() > tokenData.expiresAt) return res.status(400).send("Token expired.");
 
-  // Mark token as used
+  // ✅ Mark token as used
   await tokenRef.update({ used: true });
 
-  // Send blink command
-  client.publish("esp32/cmd", JSON.stringify({ command: "blink" }));
-  console.log("⬇️ Sent BLINK command");
+  // ✅ Update QR document status
+  const qrRef = firestore.collection("qr_codes").doc(qrCode);
+  await qrRef.update({
+    status: "paid",
+    isActive: true,
+  });
 
-  // Redirect to app
-  const redirectUrl = `myapp://main?payment_status=success&token=${token}`;
+  // ✅ Log payment under bike
+  await firestore.collection("bikes").doc(bikeId).collection("payments").add({
+    token,
+    qrCode,
+    status: "success",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // ✅ Send blink command for specific bike
+  client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "blink" }));
+  console.log(`⬇️ Sent BLINK to bike ${bikeId}`);
+
+  // ✅ Redirect to mobile app
+  const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&token=${token}`;
   res.redirect(redirectUrl);
 });
 
