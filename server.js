@@ -70,11 +70,11 @@ function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// Generate token for bike + QR + user
+// Generate token for bike + QR
 app.get("/generate-token", async (req, res) => {
-  const { bikeId, qrCode, userId } = req.query;
-  if (!bikeId || !qrCode || !userId) {
-    return res.status(400).json({ error: "Missing bikeId, qrCode, or userId" });
+  const { bikeId, qrCode } = req.query;
+  if (!bikeId || !qrCode) {
+    return res.status(400).json({ error: "Missing bikeId or qrCode" });
   }
 
   const token = generateToken();
@@ -88,7 +88,6 @@ app.get("/generate-token", async (req, res) => {
     .doc(token)
     .set({
       qrCode,
-      userId, // 🔑 tie token to renter immediately
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       expiresAt,
       used: false,
@@ -96,7 +95,6 @@ app.get("/generate-token", async (req, res) => {
 
   res.json({ token });
 });
-
 
 app.get("/success", async (req, res) => {
   const { bikeId, qrCode, token, userId } = req.query;
@@ -145,6 +143,30 @@ app.get("/success", async (req, res) => {
   res.redirect(redirectUrl);
 });
 
+// Stop ride and lock bike
+app.post("/stopRide", async (req, res) => {
+    const { bikeId, userId } = req.body;
+    if (!bikeId || !userId) return res.status(400).json({ error: "Missing bikeId or userId" });
+
+    try {
+        // Update bike status in QR doc
+        const qrRef = firestore.collection("qr_codes").doc(bikeId);
+        await qrRef.update({
+            status: "available",
+            isActive: false,
+            rentedBy: null
+        });
+
+        // Send lock command to ESP32
+        client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "lock" }));
+        console.log(`🔒 Sent LOCK to bike ${bikeId}`);
+
+        res.json({ success: true, message: "Ride stopped and bike locked" });
+    } catch (err) {
+        console.error("❌ /stopRide failed", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // Health check
 app.get("/", (req, res) => {
