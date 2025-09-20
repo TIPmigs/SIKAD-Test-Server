@@ -96,6 +96,7 @@ app.get("/generate-token", async (req, res) => {
   res.json({ token });
 });
 
+// ================== /success endpoint ==================
 app.get("/success", async (req, res) => {
   const { bikeId, qrCode, token, userId } = req.query;
   if (!bikeId || !qrCode || !token || !userId) {
@@ -134,22 +135,26 @@ app.get("/success", async (req, res) => {
     rentedBy: userId,
   });
 
-  // Send blink command to ESP32
-  client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "blink" }));
-  console.log(`⬇️ Sent BLINK to bike ${bikeId}`);
+  // Send blink command to ESP32 **with qrCode and userId**
+  client.publish(
+    `esp32/cmd/${bikeId}`,
+    JSON.stringify({ command: "blink", qrCode, userId }) // <-- added userId here
+  );
+  console.log(`⬇️ Sent BLINK to bike ${bikeId} with QR ${qrCode} and user ${userId}`);
 
   // Redirect to app
   const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&token=${token}&userId=${userId}`;
   res.redirect(redirectUrl);
 });
 
+
 // Endpoint to end ride in Firestore
 app.post("/endRide", async (req, res) => {
-    const { bikeId, userId } = req.body;
-    if (!bikeId || !userId) return res.status(400).json({ error: "Missing bikeId or userId" });
+    const { bikeId, qrCode, userId } = req.body; // <-- added qrCode
+    if (!bikeId || !userId || !qrCode) return res.status(400).json({ error: "Missing bikeId, qrCode, or userId" });
 
     try {
-        const qrRef = firestore.collection("qr_codes").doc(bikeId);
+        const qrRef = firestore.collection("qr_codes").doc(qrCode); // <-- use qrCode, not bikeId
         await qrRef.update({
             status: "available",
             isActive: false,
@@ -177,7 +182,6 @@ app.post("/lockBike", async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
 
 // Health check
 app.get("/", (req, res) => {
