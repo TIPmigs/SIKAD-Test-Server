@@ -70,11 +70,11 @@ function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// Generate token for bike + QR
+// Generate token for bike + QR + user
 app.get("/generate-token", async (req, res) => {
-  const { bikeId, qrCode } = req.query;
-  if (!bikeId || !qrCode) {
-    return res.status(400).json({ error: "Missing bikeId or qrCode" });
+  const { bikeId, qrCode, userId } = req.query;
+  if (!bikeId || !qrCode || !userId) {
+    return res.status(400).json({ error: "Missing bikeId, qrCode, or userId" });
   }
 
   const token = generateToken();
@@ -88,6 +88,7 @@ app.get("/generate-token", async (req, res) => {
     .doc(token)
     .set({
       qrCode,
+      userId, // 🔑 tie token to renter immediately
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       expiresAt,
       used: false,
@@ -95,6 +96,7 @@ app.get("/generate-token", async (req, res) => {
 
   res.json({ token });
 });
+
 
 app.get("/success", async (req, res) => {
   const { bikeId, qrCode, token, userId } = req.query;
