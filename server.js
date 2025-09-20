@@ -96,11 +96,10 @@ app.get("/generate-token", async (req, res) => {
   res.json({ token });
 });
 
-// Payment success
 app.get("/success", async (req, res) => {
-  const { bikeId, qrCode, token } = req.query;
-  if (!bikeId || !qrCode || !token) {
-    return res.status(400).send("Missing bikeId, qrCode, or token.");
+  const { bikeId, qrCode, token, userId } = req.query;
+  if (!bikeId || !qrCode || !token || !userId) {
+    return res.status(400).send("Missing bikeId, qrCode, token, or userId.");
   }
 
   const tokenRef = firestore
@@ -110,40 +109,40 @@ app.get("/success", async (req, res) => {
     .doc(token);
   const tokenSnap = await tokenRef.get();
 
-  if (!tokenSnap.exists) {
-    return res.status(400).send("Invalid token.");
-  }
+  if (!tokenSnap.exists) return res.status(400).send("Invalid token.");
 
   const tokenData = tokenSnap.data();
   if (tokenData.used) return res.status(400).send("Token already used.");
   if (Date.now() > tokenData.expiresAt) return res.status(400).send("Token expired.");
 
-  // ✅ Mark token as used
   await tokenRef.update({ used: true });
 
-  // ✅ Update QR document status
+  // Update QR doc with rentedBy
   const qrRef = firestore.collection("qr_codes").doc(qrCode);
   await qrRef.update({
     status: "paid",
     isActive: true,
+    rentedBy: userId, // <-- NEW field
   });
 
-  // ✅ Log payment under bike
+  // Log payment
   await firestore.collection("bikes").doc(bikeId).collection("payments").add({
     token,
     qrCode,
     status: "success",
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    rentedBy: userId,
   });
 
-  // ✅ Send blink command for specific bike
+  // Send blink command to ESP32
   client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "blink" }));
   console.log(`⬇️ Sent BLINK to bike ${bikeId}`);
 
-  // ✅ Redirect to mobile app
-  const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&token=${token}`;
+  // Redirect to app
+  const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&token=${token}&userId=${userId}`;
   res.redirect(redirectUrl);
 });
+
 
 // Health check
 app.get("/", (req, res) => {
