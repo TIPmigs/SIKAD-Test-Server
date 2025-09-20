@@ -143,13 +143,12 @@ app.get("/success", async (req, res) => {
   res.redirect(redirectUrl);
 });
 
-// Stop ride and lock bike
-app.post("/stopRide", async (req, res) => {
+// Endpoint to end ride in Firestore
+app.post("/endRide", async (req, res) => {
     const { bikeId, userId } = req.body;
     if (!bikeId || !userId) return res.status(400).json({ error: "Missing bikeId or userId" });
 
     try {
-        // Update bike status in QR doc
         const qrRef = firestore.collection("qr_codes").doc(bikeId);
         await qrRef.update({
             status: "available",
@@ -157,16 +156,28 @@ app.post("/stopRide", async (req, res) => {
             rentedBy: null
         });
 
-        // Send lock command to ESP32
-        client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "lock" }));
-        console.log(`🔒 Sent LOCK to bike ${bikeId}`);
-
-        res.json({ success: true, message: "Ride stopped and bike locked" });
+        res.json({ success: true, message: "Ride ended" });
     } catch (err) {
-        console.error("❌ /stopRide failed", err);
+        console.error("❌ /endRide failed", err);
         res.status(500).json({ error: err.message });
     }
 });
+
+// Endpoint to lock the bike
+app.post("/lockBike", async (req, res) => {
+    const { bikeId } = req.body;
+    if (!bikeId) return res.status(400).json({ error: "Missing bikeId" });
+
+    try {
+        client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "lock" }));
+        console.log(`🔒 Sent LOCK to bike ${bikeId}`);
+        res.json({ success: true, message: "Bike locked" });
+    } catch (err) {
+        console.error("❌ /lockBike failed", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 // Health check
 app.get("/", (req, res) => {
