@@ -3,8 +3,35 @@ import mqtt from "mqtt";
 import admin from "firebase-admin";
 import express from "express";
 import crypto from "crypto";
+import * as turf from "@turf/turf";
+import fs from "fs";
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
+// Hardcoded polygon (GeoJSON style, [lon, lat])
+const testPolygon = {
+  type: "Feature",
+  geometry: {
+    type: "Polygon",
+    coordinates: [[
+      [121.0155930051057, 14.784261952800392],
+      [121.0159518006032, 14.784476636782188],
+      [121.01560426774483, 14.784821997524404],
+      [121.01533879125566, 14.784540419663301],
+      [121.0155930051057, 14.784261952800392] // closing point
+    ]]
+  }
+};
+
+// ✅ Local vs Deployed Firebase Key
+let serviceAccount;
+if (process.env.FIREBASE_KEY_JSON) {
+  // Deployment (Render, etc.)
+  serviceAccount = JSON.parse(process.env.FIREBASE_KEY_JSON);
+  console.log("🔑 Using FIREBASE_KEY_JSON from environment.");
+} else {
+  // Local development (firebase-key.json file)
+  serviceAccount = JSON.parse(fs.readFileSync("./firebase-key.json", "utf8"));
+  console.log("🔑 Using local firebase-key.json file.");
+}
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -54,6 +81,22 @@ client.on("message", async (topic, message) => {
     await rtdb.ref(`gpsData/${bikeId}/latest`).set(gpsData);
 
     console.log(`✅ Saved GPS for ${bikeId}:`, gpsData);
+
+    // ---------- Geofence Check ----------
+    const point = turf.point([data.longitude, data.latitude]); // [lon, lat]
+    const inside = turf.booleanPointInPolygon(point, testPolygon);
+
+    if (inside) {
+      console.log(`🚲 Bike ${bikeId} is INSIDE geofence ✅`);
+    } else {
+      console.log(`🚨 Bike ${bikeId} is OUTSIDE geofence ❌`);
+
+      // Example: notify ESP32 or log violation
+      client.publish(
+        `esp32/cmd/${bikeId}`,
+        JSON.stringify({ command: "alert", reason: "out_of_bounds" })
+      );
+    }
   } catch (err) {
     console.error("❌ Failed to process message:", err.message);
   }
@@ -147,40 +190,39 @@ app.get("/success", async (req, res) => {
   res.redirect(redirectUrl);
 });
 
-
 // Endpoint to end ride in Firestore
 app.post("/endRide", async (req, res) => {
-    const { bikeId, qrCode, userId } = req.body; // <-- added qrCode
-    if (!bikeId || !userId || !qrCode) return res.status(400).json({ error: "Missing bikeId, qrCode, or userId" });
+  const { bikeId, qrCode, userId } = req.body; // <-- added qrCode
+  if (!bikeId || !userId || !qrCode) return res.status(400).json({ error: "Missing bikeId, qrCode, or userId" });
 
-    try {
-        const qrRef = firestore.collection("qr_codes").doc(qrCode); // <-- use qrCode, not bikeId
-        await qrRef.update({
-            status: "available",
-            isActive: false,
-            rentedBy: null
-        });
+  try {
+    const qrRef = firestore.collection("qr_codes").doc(qrCode); // <-- use qrCode, not bikeId
+    await qrRef.update({
+      status: "available",
+      isActive: false,
+      rentedBy: null
+    });
 
-        res.json({ success: true, message: "Ride ended" });
-    } catch (err) {
-        console.error("❌ /endRide failed", err);
-        res.status(500).json({ error: err.message });
-    }
+    res.json({ success: true, message: "Ride ended" });
+  } catch (err) {
+    console.error("❌ /endRide failed", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Endpoint to lock the bike
 app.post("/lockBike", async (req, res) => {
-    const { bikeId } = req.body;
-    if (!bikeId) return res.status(400).json({ error: "Missing bikeId" });
+  const { bikeId } = req.body;
+  if (!bikeId) return res.status(400).json({ error: "Missing bikeId" });
 
-    try {
-        client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "lock" }));
-        console.log(`🔒 Sent LOCK to bike ${bikeId}`);
-        res.json({ success: true, message: "Bike locked" });
-    } catch (err) {
-        console.error("❌ /lockBike failed", err);
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    client.publish(`esp32/cmd/${bikeId}`, JSON.stringify({ command: "lock" }));
+    console.log(`🔒 Sent LOCK to bike ${bikeId}`);
+    res.json({ success: true, message: "Bike locked" });
+  } catch (err) {
+    console.error("❌ /lockBike failed", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Health check
