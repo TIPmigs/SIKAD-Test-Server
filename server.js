@@ -141,7 +141,7 @@ app.get("/generate-token", async (req, res) => {
 
 // ================== /success endpoint ==================
 app.get("/success", async (req, res) => {
-  const { bikeId, qrCode, token, userId } = req.query;
+  const { bikeId, qrCode, token, userId, rideTime } = req.query;
   if (!bikeId || !qrCode || !token || !userId) {
     return res.status(400).send("Missing bikeId, qrCode, token, or userId.");
   }
@@ -166,10 +166,10 @@ app.get("/success", async (req, res) => {
   await qrRef.update({
     status: "paid",
     isActive: true,
-    rentedBy: userId, // <-- NEW field
+    rentedBy: userId, // <-- still stored
   });
 
-  // Log payment
+  // Log payment (no rideTime here, we don’t persist it)
   await firestore.collection("bikes").doc(bikeId).collection("payments").add({
     token,
     qrCode,
@@ -178,17 +178,22 @@ app.get("/success", async (req, res) => {
     rentedBy: userId,
   });
 
-  // Send blink command to ESP32 **with qrCode and userId**
-  client.publish(
-    `esp32/cmd/${bikeId}`,
-    JSON.stringify({ command: "blink", qrCode, userId }) // <-- added userId here
+  // Send blink command to ESP32 WITH rideTime
+  const blinkPayload = { command: "blink", qrCode, userId };
+  if (rideTime) {
+    blinkPayload.rideTime = rideTime; // temporary, not stored anywhere
+  }
+
+  client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
+  console.log(
+    `⬇️ Sent BLINK to bike ${bikeId} with QR ${qrCode}, user ${userId}, rideTime ${rideTime || "N/A"}`
   );
-  console.log(`⬇️ Sent BLINK to bike ${bikeId} with QR ${qrCode} and user ${userId}`);
 
   // Redirect to app
   const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&token=${token}&userId=${userId}`;
   res.redirect(redirectUrl);
 });
+
 
 // Endpoint to end ride in Firestore
 app.post("/endRide", async (req, res) => {
