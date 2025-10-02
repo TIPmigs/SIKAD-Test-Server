@@ -162,7 +162,7 @@ app.get("/success", async (req, res) => {
   await tokenRef.update({ used: true });
 
   // Update QR doc with rentedBy
-  const qrRef = firestore.collection("qr_codes").doc(qrCode);
+  const qrRef = firestore.collection("bikes").doc(bikeId);
   await qrRef.update({
     status: "paid",
     isActive: true,
@@ -201,7 +201,7 @@ app.post("/endRide", async (req, res) => {
   if (!bikeId || !userId || !qrCode) return res.status(400).json({ error: "Missing bikeId, qrCode, or userId" });
 
   try {
-    const qrRef = firestore.collection("qr_codes").doc(qrCode); // <-- use qrCode, not bikeId
+    const qrRef = firestore.collection("bikes").doc(bikeId); 
     await qrRef.update({
       status: "available",
       isActive: false,
