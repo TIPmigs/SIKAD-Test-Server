@@ -187,9 +187,6 @@ app.get("/success", async (req, res) => {
     paymentStatus: "successful",
     amount: req.query.amount || "unknown",  // from redirect param
     paymentDate: admin.firestore.FieldValue.serverTimestamp(),
-    bikeId,
-    qrCode,
-    token
   });
 
   // 🔹 Notify ESP32
