@@ -176,7 +176,7 @@ app.get("/success", async (req, res) => {
     status: "paid",
     isActive: true,
     rentedBy: userId,
-    activeRideId: rideId,
+    activeRideId: rideId,a
   });
 
   // 🔹 Log payment
@@ -193,7 +193,7 @@ app.get("/success", async (req, res) => {
   if (rideTime) blinkPayload.rideTime = rideTime;
 
   client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
-  console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}`);
+  console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, rideTime: ${rideTime}`);
 
   const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&rideId=${rideId}&userId=${userId}`;
   res.redirect(redirectUrl);
