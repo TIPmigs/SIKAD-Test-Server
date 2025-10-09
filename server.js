@@ -143,8 +143,8 @@ app.get("/generate-token", async (req, res) => {
 
 // ---------- Payment success ----------
 app.get("/success", async (req, res) => {
-  const { bikeId, qrCode, token, userId, rideTime } = req.query;
-  if (!bikeId || !qrCode || !token || !userId)
+  const { bikeId, qrCode, token, userId, rideTime, amount } = req.query;
+  if (!bikeId || !qrCode || !token || !userId || !amount)
     return res.status(400).send("Missing parameters.");
 
   const tokenRef = firestore.collection("bikes").doc(bikeId)
@@ -193,7 +193,7 @@ app.get("/success", async (req, res) => {
   if (rideTime) blinkPayload.rideTime = rideTime;
 
   client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
-  console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, rideTime: ${rideTime}`);
+  console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, rideTime: ${rideTime}, amount: ${amount}`);
 
   const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&rideId=${rideId}&userId=${userId}`;
   res.redirect(redirectUrl);
