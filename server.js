@@ -179,13 +179,17 @@ app.get("/success", async (req, res) => {
     activeRideId: rideId,
   });
 
-  // 🔹 Log payment
-  await firestore.collection("bikes").doc(bikeId).collection("payments").add({
-    token,
+  // 🔹 Log payment (to a top-level "payments" collection)
+  await firestore.collection("payments").add({
+    uid: userId,
+    paymentAccount: "miggy account",   // hardcoded for now
+    paymentType: "gcash",
+    paymentStatus: "successful",
+    amount: req.query.amount || "unknown",  // from redirect param
+    paymentDate: admin.firestore.FieldValue.serverTimestamp(),
+    bikeId,
     qrCode,
-    status: "success",
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    rentedBy: userId,
+    token
   });
 
   // 🔹 Notify ESP32
