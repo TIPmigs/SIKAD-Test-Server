@@ -176,7 +176,7 @@ app.get("/success", async (req, res) => {
     status: "paid",
     isActive: true,
     rentedBy: userId,
-    activeRideId: rideId,a
+    activeRideId: rideId,
   });
 
   // 🔹 Log payment
