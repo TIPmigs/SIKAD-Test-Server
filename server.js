@@ -147,58 +147,68 @@ app.get("/success", async (req, res) => {
   if (!bikeId || !qrCode || !token || !userId || !amount)
     return res.status(400).send("Missing parameters.");
 
-  const tokenRef = firestore.collection("bikes").doc(bikeId)
-    .collection("tokens").doc(token);
-  const tokenSnap = await tokenRef.get();
+  try {
+    const tokenRef = firestore.collection("bikes").doc(bikeId)
+      .collection("tokens").doc(token);
+    const tokenSnap = await tokenRef.get();
 
-  if (!tokenSnap.exists) return res.status(400).send("Invalid token.");
-  const tokenData = tokenSnap.data();
+    if (!tokenSnap.exists) return res.status(400).send("Invalid token.");
+    const tokenData = tokenSnap.data();
 
-  if (tokenData.used) return res.status(400).send("Token already used.");
-  if (Date.now() > tokenData.expiresAt) return res.status(400).send("Token expired.");
+    if (tokenData.used) return res.status(400).send("Token already used.");
+    if (Date.now() > tokenData.expiresAt) return res.status(400).send("Token expired.");
 
-  await tokenRef.update({ used: true });
+    await tokenRef.update({ used: true });
 
-  // 🔹 Create a new ride log
-  const rideRef = await firestore.collection("ride_logs").add({
-    bikeId,
-    userId,
-    startTime: admin.firestore.FieldValue.serverTimestamp(),
-    endTime: null,
-    points: [],
-  });
+    // 🔹 Log payment first so we can get its ID
+    const paymentRef = await firestore.collection("payments").add({
+      uid: userId,
+      paymentAccount: "miggy account",   
+      paymentType: "gcash",
+      paymentStatus: "successful",
+      amount: req.query.amount || "unknown", 
+      paymentDate: admin.firestore.FieldValue.serverTimestamp(),
+    });
 
-  const rideId = rideRef.id;
+    const paymentId = paymentRef.id; // ✅ Capture payment ID
 
-  // 🔹 Mark bike as active and link rideId
-  const qrRef = firestore.collection("bikes").doc(bikeId);
-  await qrRef.update({
-    status: "paid",
-    isActive: true,
-    rentedBy: userId,
-    activeRideId: rideId,
-  });
+    // 🔹 Create a new ride log linked to this payment
+    const rideRef = await firestore.collection("ride_logs").add({
+      bikeId,
+      userId,
+      paymentId, // ✅ Link to payment record
+      startTime: admin.firestore.FieldValue.serverTimestamp(),
+      endTime: null,
+      points: [],
+    });
 
-  // 🔹 Log payment (to a top-level "payments" collection)
-  await firestore.collection("payments").add({
-    uid: userId,
-    paymentAccount: "miggy account",   // hardcoded for now
-    paymentType: "gcash",
-    paymentStatus: "successful",
-    amount: req.query.amount || "unknown",  // from redirect param
-    paymentDate: admin.firestore.FieldValue.serverTimestamp(),
-  });
+    const rideId = rideRef.id;
 
-  // 🔹 Notify ESP32
-  const blinkPayload = { command: "blink", qrCode, userId };
-  if (rideTime) blinkPayload.rideTime = rideTime;
+    // 🔹 Mark bike as active and link rideId
+    const qrRef = firestore.collection("bikes").doc(bikeId);
+    await qrRef.update({
+      status: "paid",
+      isActive: true,
+      rentedBy: userId,
+      activeRideId: rideId,
+    });
 
-  client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
-  console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, rideTime: ${rideTime}, amount: ${amount}`);
+    // 🔹 Notify ESP32
+    const blinkPayload = { command: "blink", qrCode, userId };
+    if (rideTime) blinkPayload.rideTime = rideTime;
 
-  const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&rideId=${rideId}&userId=${userId}`;
-  res.redirect(redirectUrl);
+    client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
+
+    console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, paymentId: ${paymentId}, amount: ${amount}`);
+
+    const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&rideId=${rideId}&userId=${userId}`;
+    res.redirect(redirectUrl);
+  } catch (err) {
+    console.error("❌ /success error:", err);
+    res.status(500).send("Internal server error.");
+  }
 });
+
 
 // ---------- End ride ----------
 app.post("/endRide", async (req, res) => {
