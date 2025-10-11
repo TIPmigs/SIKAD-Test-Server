@@ -142,42 +142,40 @@ app.get("/generate-token", async (req, res) => {
 });
 
 // ---------- Payment success ----------
-// ---------- Payment success ----------
 app.get("/success", async (req, res) => {
   const { bikeId, qrCode, token, userId, rideTime, amount } = req.query;
   if (!bikeId || !qrCode || !token || !userId || !amount)
     return res.status(400).send("Missing parameters.");
 
   try {
+    // Validate token
     const tokenRef = firestore.collection("bikes").doc(bikeId)
       .collection("tokens").doc(token);
     const tokenSnap = await tokenRef.get();
-
     if (!tokenSnap.exists) return res.status(400).send("Invalid token.");
     const tokenData = tokenSnap.data();
-
     if (tokenData.used) return res.status(400).send("Token already used.");
     if (Date.now() > tokenData.expiresAt) return res.status(400).send("Token expired.");
 
     await tokenRef.update({ used: true });
 
-    // 🔹 Log payment first so we can get its ID
+    // Log payment
     const paymentRef = await firestore.collection("payments").add({
       uid: userId,
       paymentAccount: "miggy account",   
       paymentType: "gcash",
       paymentStatus: "successful",
-      amount: req.query.amount || "unknown", 
+      amount,
       paymentDate: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const paymentId = paymentRef.id; // ✅ Capture payment ID
+    const paymentId = paymentRef.id;
 
-    // 🔹 Create a new ride log linked to this payment
+    // Create ride log
     const rideRef = await firestore.collection("ride_logs").add({
       bikeId,
       userId,
-      paymentId, // ✅ Link to payment record
+      paymentId,
       startTime: admin.firestore.FieldValue.serverTimestamp(),
       endTime: null,
       points: [],
@@ -185,45 +183,33 @@ app.get("/success", async (req, res) => {
 
     const rideId = rideRef.id;
 
-    // 🔹 Mark bike as active and link rideId
-    const qrRef = firestore.collection("bikes").doc(bikeId);
-    await qrRef.update({
+    // Update bike status
+    await firestore.collection("bikes").doc(bikeId).update({
       status: "paid",
       isActive: true,
       rentedBy: userId,
       activeRideId: rideId,
     });
 
-    // 🔹 Notify ESP32 with blink command AND rideTime
-    // Convert rideTime strings to minutes if needed
-    let rideDurationMinutes = 0;
-    if (rideTime) {
-      if (rideTime.includes("hour")) {
-        rideDurationMinutes = parseInt(rideTime) * 60; // "1 hour" → 60
-      } else if (rideTime.includes("minute")) {
-        rideDurationMinutes = parseInt(rideTime);      // "30 minutes" → 30
-      }
-    }
-
+    // ✅ Send rideTime exactly as received
     const blinkPayload = {
       command: "blink",
       qrCode,
       userId,
-      rideTimeMinutes: rideDurationMinutes // <-- always send in minutes
+      rideTime // send as-is
     };
-
     client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
 
     console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, paymentId: ${paymentId}, amount: ${amount}, rideTime: ${rideTime}`);
 
     const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&rideId=${rideId}&userId=${userId}`;
     res.redirect(redirectUrl);
+
   } catch (err) {
     console.error("❌ /success error:", err);
     res.status(500).send("Internal server error.");
   }
 });
-
 
 
 // ---------- End ride ----------
