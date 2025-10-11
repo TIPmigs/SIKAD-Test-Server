@@ -142,6 +142,7 @@ app.get("/generate-token", async (req, res) => {
 });
 
 // ---------- Payment success ----------
+// ---------- Payment success ----------
 app.get("/success", async (req, res) => {
   const { bikeId, qrCode, token, userId, rideTime, amount } = req.query;
   if (!bikeId || !qrCode || !token || !userId || !amount)
@@ -193,13 +194,27 @@ app.get("/success", async (req, res) => {
       activeRideId: rideId,
     });
 
-    // 🔹 Notify ESP32
-    const blinkPayload = { command: "blink", qrCode, userId };
-    if (rideTime) blinkPayload.rideTime = rideTime;
+    // 🔹 Notify ESP32 with blink command AND rideTime
+    // Convert rideTime strings to minutes if needed
+    let rideDurationMinutes = 0;
+    if (rideTime) {
+      if (rideTime.includes("hour")) {
+        rideDurationMinutes = parseInt(rideTime) * 60; // "1 hour" → 60
+      } else if (rideTime.includes("minute")) {
+        rideDurationMinutes = parseInt(rideTime);      // "30 minutes" → 30
+      }
+    }
+
+    const blinkPayload = {
+      command: "blink",
+      qrCode,
+      userId,
+      rideTimeMinutes: rideDurationMinutes // <-- always send in minutes
+    };
 
     client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
 
-    console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, paymentId: ${paymentId}, amount: ${amount}`);
+    console.log(`⬇️ Ride started for ${bikeId}, rideId: ${rideId}, paymentId: ${paymentId}, amount: ${amount}, rideTime: ${rideTime}`);
 
     const redirectUrl = `myapp://main?payment_status=success&bikeId=${bikeId}&rideId=${rideId}&userId=${userId}`;
     res.redirect(redirectUrl);
@@ -208,6 +223,7 @@ app.get("/success", async (req, res) => {
     res.status(500).send("Internal server error.");
   }
 });
+
 
 
 // ---------- End ride ----------
