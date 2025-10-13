@@ -162,11 +162,13 @@ app.get("/success", async (req, res) => {
     // Log payment
     const paymentRef = await firestore.collection("payments").add({
       uid: userId,
-      paymentAccount: "miggy account",   
+      paymentAccount: "miggy account",
       paymentType: "gcash",
       paymentStatus: "successful",
       amount,
       paymentDate: admin.firestore.FieldValue.serverTimestamp(),
+      isDeleted: false,                 // 👈 NEW
+      deletedAt: null                   // 👈 NEW
     });
 
     const paymentId = paymentRef.id;
@@ -179,6 +181,8 @@ app.get("/success", async (req, res) => {
       startTime: admin.firestore.FieldValue.serverTimestamp(),
       endTime: null,
       points: [],
+      isDeleted: false,                 // 👈 NEW
+      deletedAt: null                   // 👈 NEW
     });
 
     const rideId = rideRef.id;
@@ -210,6 +214,54 @@ app.get("/success", async (req, res) => {
     res.status(500).send("Internal server error.");
   }
 });
+
+// ---------- Soft Delete Ride ----------
+app.post("/deleteRide", async (req, res) => {
+  const { rideId, userId } = req.body;
+  if (!rideId || !userId) {
+    return res.status(400).json({ error: "Missing rideId or userId" });
+  }
+
+  try {
+    const rideRef = firestore.collection("ride_logs").doc(rideId);
+    const rideSnap = await rideRef.get();
+
+    if (!rideSnap.exists) {
+      return res.status(404).json({ error: "Ride not found" });
+    }
+
+    const rideData = rideSnap.data();
+
+    // 🔐 Ensure user only deletes their own ride
+    if (rideData.userId !== userId) {
+      return res.status(403).json({ error: "Not authorized to delete this ride" });
+    }
+
+    // ✅ Soft delete the ride
+    await rideRef.update({
+      isDeleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // ✅ Also soft delete the linked payment (if exists)
+    if (rideData.paymentId) {
+      const paymentRef = firestore.collection("payments").doc(rideData.paymentId);
+      await paymentRef.update({
+        isDeleted: true,
+        deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log(`💰 Payment ${rideData.paymentId} also soft-deleted`);
+    }
+
+    console.log(`🗑️ Ride ${rideId} soft-deleted by user ${userId}`);
+    res.json({ success: true, message: "Ride and payment soft-deleted successfully." });
+
+  } catch (err) {
+    console.error("❌ /deleteRide error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 
 
 // ---------- End ride ----------
