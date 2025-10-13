@@ -6,21 +6,6 @@ import crypto from "crypto";
 import * as turf from "@turf/turf";
 import fs from "fs";
 
-// ==================== GEOFENCE ====================
-const testPolygon = {
-  type: "Feature",
-  geometry: {
-    type: "Polygon",
-    coordinates: [[
-      [121.0155930051057, 14.784261952800392],
-      [121.0159518006032, 14.784476636782188],
-      [121.01560426774483, 14.784821997524404],
-      [121.01533879125566, 14.784540419663301],
-      [121.0155930051057, 14.784261952800392]
-    ]]
-  }
-};
-
 // ==================== FIREBASE INIT ====================
 let serviceAccount;
 if (process.env.FIREBASE_KEY_JSON) {
@@ -57,8 +42,48 @@ client.on("connect", () => {
   });
 });
 
+// ==================== GEOFENCE CACHE ====================
+let cachedGeofences = [];
+let lastCacheTime = 0;
+const CACHE_DURATION = 60 * 1000; // 1 minute
+
+async function getActiveGeofences() {
+  const now = Date.now();
+  if (cachedGeofences.length && now - lastCacheTime < CACHE_DURATION) {
+    return cachedGeofences;
+  }
+
+  const geofenceSnap = await firestore.collection('geofence')
+    .where('is_active', '==', true)
+    .get();
+
+  const geofences = [];
+
+  geofenceSnap.forEach(doc => {
+    const data = doc.data();
+    if (data.point && data.point.length) {
+      const coordinates = data.point.map(p => [p.location[1], p.location[0]]);
+      if (coordinates[0][0] !== coordinates[coordinates.length-1][0] ||
+          coordinates[0][1] !== coordinates[coordinates.length-1][1]) {
+        coordinates.push(coordinates[0]);
+      }
+      geofences.push({
+        name: data.name,
+        description: data.description,
+        polygon: turf.polygon([coordinates]),
+        color: data.color_code
+      });
+    }
+  });
+
+  cachedGeofences = geofences;
+  lastCacheTime = now;
+  console.log(`📦 Cached ${geofences.length} active geofences`);
+  return geofences;
+}
+
 // ==================== MQTT MESSAGE HANDLER ====================
-client.on("message", async (topic, message) => {
+client.on('message', async (topic, message) => {
   const payload = message.toString();
   console.log(`📩 Received [${topic}]:`, payload);
 
@@ -73,21 +98,27 @@ client.on("message", async (topic, message) => {
       timestamp: new Date().toISOString(),
     };
 
-    // ✅ Always update RTDB latest GPS
+    // ✅ Update RTDB latest GPS
     await rtdb.ref(`gpsData/${bikeId}/latest`).set(gpsData);
-    console.log(`✅ Saved GPS for ${bikeId}:`, gpsData);
 
-    // ---------- GEOFENCE ----------
+    // ---------- CHECK AGAINST ALL ACTIVE GEOFENCES ----------
     const point = turf.point([data.longitude, data.latitude]);
-    const inside = turf.booleanPointInPolygon(point, testPolygon);
+    const geofences = await getActiveGeofences();
+    let insideAny = false;
 
-    if (inside) {
-      console.log(`🚲 Bike ${bikeId} is INSIDE geofence ✅`);
-    } else {
-      console.log(`🚨 Bike ${bikeId} is OUTSIDE geofence ❌`);
+    for (const gf of geofences) {
+      if (turf.booleanPointInPolygon(point, gf.polygon)) {
+        insideAny = true;
+        console.log(`🚲 Bike ${bikeId} is inside geofence: ${gf.name}`);
+        break;
+      }
+    }
+
+    if (!insideAny) {
+      console.log(`🚨 Bike ${bikeId} is OUTSIDE all geofences!`);
       client.publish(
         `esp32/cmd/${bikeId}`,
-        JSON.stringify({ command: "alert", reason: "out_of_bounds" })
+        JSON.stringify({ command: 'alert', reason: 'out_of_bounds' })
       );
     }
 
@@ -106,6 +137,7 @@ client.on("message", async (topic, message) => {
 
       console.log(`🗺️ Appended GPS point to ride ${rideId} for bike ${bikeId}`);
     }
+
   } catch (err) {
     console.error("❌ Failed to process message:", err.message);
   }
@@ -121,7 +153,6 @@ function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// ---------- Generate token ----------
 app.get("/generate-token", async (req, res) => {
   const { bikeId, qrCode } = req.query;
   if (!bikeId || !qrCode) return res.status(400).json({ error: "Missing bikeId or qrCode" });
@@ -167,8 +198,8 @@ app.get("/success", async (req, res) => {
       paymentStatus: "successful",
       amount,
       paymentDate: admin.firestore.FieldValue.serverTimestamp(),
-      isDeleted: false,                 // 👈 NEW
-      deletedAt: null                   // 👈 NEW
+      isDeleted: false,
+      deletedAt: null
     });
 
     const paymentId = paymentRef.id;
@@ -181,8 +212,8 @@ app.get("/success", async (req, res) => {
       startTime: admin.firestore.FieldValue.serverTimestamp(),
       endTime: null,
       points: [],
-      isDeleted: false,                 // 👈 NEW
-      deletedAt: null                   // 👈 NEW
+      isDeleted: false,
+      deletedAt: null
     });
 
     const rideId = rideRef.id;
@@ -195,12 +226,12 @@ app.get("/success", async (req, res) => {
       activeRideId: rideId,
     });
 
-    // ✅ Send rideTime exactly as received
+    // Send rideTime exactly as received
     const blinkPayload = {
       command: "blink",
       qrCode,
       userId,
-      rideTime // send as-is
+      rideTime
     };
     client.publish(`esp32/cmd/${bikeId}`, JSON.stringify(blinkPayload));
 
@@ -232,18 +263,15 @@ app.post("/deleteRide", async (req, res) => {
 
     const rideData = rideSnap.data();
 
-    // 🔐 Ensure user only deletes their own ride
     if (rideData.userId !== userId) {
       return res.status(403).json({ error: "Not authorized to delete this ride" });
     }
 
-    // ✅ Soft delete the ride
     await rideRef.update({
       isDeleted: true,
       deletedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // ✅ Also soft delete the linked payment (if exists)
     if (rideData.paymentId) {
       const paymentRef = firestore.collection("payments").doc(rideData.paymentId);
       await paymentRef.update({
@@ -261,8 +289,6 @@ app.post("/deleteRide", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
-
 
 // ---------- End ride ----------
 app.post("/endRide", async (req, res) => {
