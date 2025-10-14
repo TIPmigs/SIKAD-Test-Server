@@ -61,12 +61,15 @@ async function getActiveGeofences() {
 
   geofenceSnap.forEach(doc => {
     const data = doc.data();
-    if (data.point && data.point.length) {
-      const coordinates = data.point.map(p => [p.location[1], p.location[0]]);
+    if (data.points && data.points.length) {
+      const coordinates = data.points.map(p => [p.location.longitude, p.location.latitude]);
+
+      // close the polygon if not closed
       if (coordinates[0][0] !== coordinates[coordinates.length-1][0] ||
           coordinates[0][1] !== coordinates[coordinates.length-1][1]) {
         coordinates.push(coordinates[0]);
       }
+
       geofences.push({
         name: data.name,
         description: data.description,
@@ -81,6 +84,10 @@ async function getActiveGeofences() {
   console.log(`📦 Cached ${geofences.length} active geofences`);
   return geofences;
 }
+
+// ==================== GEOFENCE CROSSING TRACKER ====================
+const geofenceCrossings = {}; 
+const CROSS_THRESHOLD = 3; // triggers alert after 3 crossings
 
 // ==================== MQTT MESSAGE HANDLER ====================
 client.on('message', async (topic, message) => {
@@ -114,12 +121,33 @@ client.on('message', async (topic, message) => {
       }
     }
 
+    // ---------- GEOFENCE CROSSING ALERT ----------
     if (!insideAny) {
       console.log(`🚨 Bike ${bikeId} is OUTSIDE all geofences!`);
       client.publish(
         `esp32/cmd/${bikeId}`,
         JSON.stringify({ command: 'alert', reason: 'out_of_bounds' })
       );
+
+      if (!geofenceCrossings[bikeId]) geofenceCrossings[bikeId] = 0;
+      geofenceCrossings[bikeId] += 1;
+      console.log(`⚠️ Bike ${bikeId} geofence crossing count: ${geofenceCrossings[bikeId]}`);
+
+      if (geofenceCrossings[bikeId] >= CROSS_THRESHOLD) {
+        await firestore.collection("alerts").add({
+          bikeId,
+          type: "geofence_cross",
+          message: `Bike ${bikeId} crossed geofence`,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          count: geofenceCrossings[bikeId],
+          resolved: false,
+        });
+        console.log(`🚨 Alert logged for bike ${bikeId}`);
+        geofenceCrossings[bikeId] = 0; // reset after alert
+      }
+    } else {
+      // reset counter if bike is inside
+      geofenceCrossings[bikeId] = 0;
     }
 
     // ---------- RIDE LOGGING ----------
@@ -179,7 +207,6 @@ app.get("/success", async (req, res) => {
     return res.status(400).send("Missing parameters.");
 
   try {
-    // Validate token
     const tokenRef = firestore.collection("bikes").doc(bikeId)
       .collection("tokens").doc(token);
     const tokenSnap = await tokenRef.get();
@@ -190,7 +217,6 @@ app.get("/success", async (req, res) => {
 
     await tokenRef.update({ used: true });
 
-    // Log payment
     const paymentRef = await firestore.collection("payments").add({
       uid: userId,
       paymentAccount: "miggy account",
@@ -204,7 +230,6 @@ app.get("/success", async (req, res) => {
 
     const paymentId = paymentRef.id;
 
-    // Create ride log
     const rideRef = await firestore.collection("ride_logs").add({
       bikeId,
       userId,
@@ -218,7 +243,6 @@ app.get("/success", async (req, res) => {
 
     const rideId = rideRef.id;
 
-    // Update bike status
     await firestore.collection("bikes").doc(bikeId).update({
       status: "paid",
       isActive: true,
@@ -226,7 +250,6 @@ app.get("/success", async (req, res) => {
       activeRideId: rideId,
     });
 
-    // Send rideTime exactly as received
     const blinkPayload = {
       command: "blink",
       qrCode,
@@ -249,23 +272,15 @@ app.get("/success", async (req, res) => {
 // ---------- Soft Delete Ride ----------
 app.post("/deleteRide", async (req, res) => {
   const { rideId, userId } = req.body;
-  if (!rideId || !userId) {
-    return res.status(400).json({ error: "Missing rideId or userId" });
-  }
+  if (!rideId || !userId) return res.status(400).json({ error: "Missing rideId or userId" });
 
   try {
     const rideRef = firestore.collection("ride_logs").doc(rideId);
     const rideSnap = await rideRef.get();
-
-    if (!rideSnap.exists) {
-      return res.status(404).json({ error: "Ride not found" });
-    }
+    if (!rideSnap.exists) return res.status(404).json({ error: "Ride not found" });
 
     const rideData = rideSnap.data();
-
-    if (rideData.userId !== userId) {
-      return res.status(403).json({ error: "Not authorized to delete this ride" });
-    }
+    if (rideData.userId !== userId) return res.status(403).json({ error: "Not authorized to delete this ride" });
 
     await rideRef.update({
       isDeleted: true,
@@ -293,16 +308,14 @@ app.post("/deleteRide", async (req, res) => {
 // ---------- End ride ----------
 app.post("/endRide", async (req, res) => {
   const { bikeId, qrCode, userId } = req.body;
-  if (!bikeId || !userId || !qrCode)
-    return res.status(400).json({ error: "Missing parameters" });
+  if (!bikeId || !userId || !qrCode) return res.status(400).json({ error: "Missing parameters" });
 
   try {
     const bikeRef = firestore.collection("bikes").doc(bikeId);
     const bikeSnap = await bikeRef.get();
-
     if (!bikeSnap.exists) return res.status(404).json({ error: "Bike not found" });
-    const bikeData = bikeSnap.data();
 
+    const bikeData = bikeSnap.data();
     if (bikeData.activeRideId) {
       const rideRef = firestore.collection("ride_logs").doc(bikeData.activeRideId);
       await rideRef.update({
