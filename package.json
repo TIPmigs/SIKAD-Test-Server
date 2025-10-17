@@ -17,6 +17,7 @@
     "body-parser": "^2.2.0",
     "express": "^5.1.0",
     "firebase-admin": "^13.5.0",
-    "mqtt": "^5.14.1"
+    "mqtt": "^5.14.1",
+    "node-fetch": "^3.3.2"
   }
 }
