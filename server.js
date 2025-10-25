@@ -344,7 +344,7 @@ client.on("message", async (topic, message) => {
               violation_type: "GEOFENCE_EXIT",
             });
 
-            // await sendSMSAlert(bikeId, "geofence_cross");
+             await sendSMSAlert(bikeId, "geofence_cross");
 
             alertState.lastSMSSentAt = now;
             alertState.alertActive = true;
