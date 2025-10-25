@@ -1,4 +1,4 @@
-// server.js (ESM version) - SMS FUNCTIONS COMMENTED OUT + BIKE HEARTBEAT CHECKER
+// server.js (ESM version) - COMPLETE VERSION
 import mqtt from "mqtt";
 import admin from "firebase-admin";
 import express from "express";
@@ -113,15 +113,6 @@ const alertProcessingLocks = {}; // Prevent race conditions
 const PHILSMS_API_TOKEN = "3186|RQCCqdWxPG9SuGOrqPvBdDoFIfeOmw0WqVDev9Vg";
 const PHILSMS_SENDER_ID = "PhilSMS";
 
-// ==================== BIKE HEARTBEAT TRACKER ====================
-const bikeLastSeen = {};
-const OFFLINE_TIMEOUT = 10 * 1000; // 10 seconds
-
-// ==================== PHILSMS CONFIG ====================
-// const PHILSMS_API_TOKEN = "3186|RQCCqdWxPG9SuGOrqPvBdDoFIfeOmw0WqVDev9Vg";
-// const PHILSMS_SENDER_ID = "PhilSMS";
-
-/*
 async function sendSMSAlert(bikeId, alertType = "geofence_cross") {
   const randomTag = Math.floor(Math.random() * 1000);
 
@@ -221,7 +212,6 @@ async function sendSMSAlert(bikeId, alertType = "geofence_cross") {
     console.error("❌ Error sending SMS alert:", error);
   }
 }
-*/
 
 // ==================== SINGLE MQTT MESSAGE HANDLER ====================
 client.on("message", async (topic, message) => {
@@ -243,20 +233,7 @@ client.on("message", async (topic, message) => {
 
         console.log(`🌍 GPS Update - Bike ${bikeId}: [${data.latitude}, ${data.longitude}] Speed: ${data.speed || 0}`);
 
-        // ===== Record heartbeat =====
-        bikeLastSeen[bikeId] = Date.now();
-
-        // Immediately mark as available
-        await firestore.collection("bikes").doc(bikeId).update({
-          status: "AVAILABLE",
-          updated_at: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: "AVAILABLE",
-          last_update: admin.database.ServerValue.TIMESTAMP,
-        });
-
-        // ===== 1. UPDATE FIREBASE RTDB =====
+        // ===== 1. UPDATE FIREBASE RTDB (Real-time) =====
         await rtdb.ref(`bikes/${bikeId}`).update({
           latitude: data.latitude,
           longitude: data.longitude,
@@ -270,7 +247,7 @@ client.on("message", async (topic, message) => {
 
         console.log(`✅ RTDB updated for ${bikeId}`);
 
-        // ===== 2. UPDATE FIRESTORE =====
+        // ===== 2. UPDATE FIRESTORE (Historical) =====
         const bikeRef = firestore.collection("bikes").doc(bikeId);
         await bikeRef.set(
           {
@@ -296,7 +273,7 @@ client.on("message", async (topic, message) => {
 
         console.log(`📍 Location history saved for ${bikeId}`);
 
-        // ===== 4. CHECK GEOFENCE VIOLATIONS =====
+        // ===== 4. CHECK GEOFENCE VIOLATIONS WITH COOLDOWN =====
         const point = turf.point([data.longitude, data.latitude]);
         const geofences = await getActiveGeofences();
         let insideAny = false;
@@ -316,7 +293,7 @@ client.on("message", async (topic, message) => {
             lastSMSSentAt: 0,
             alertActive: false,
             insideCount: 0,
-            cooldown: 5 * 60 * 1000,
+            cooldown: 5 * 60 * 1000, // 5 minutes
           };
         }
 
@@ -324,6 +301,8 @@ client.on("message", async (topic, message) => {
 
         if (!insideAny) {
           console.log(`🚨 Bike ${bikeId} is OUTSIDE all geofences!`);
+          
+          // Send command to ESP32
           client.publish(
             `esp32/cmd/${bikeId}`,
             JSON.stringify({ command: "alert", reason: "out_of_bounds" })
@@ -332,7 +311,12 @@ client.on("message", async (topic, message) => {
           const timeSinceLastSMS = now - alertState.lastSMSSentAt;
 
           if (!alertState.alertActive && timeSinceLastSMS > alertState.cooldown) {
-            console.log(`📤 (TEST MODE) Geofence alert triggered for ${bikeId}`);
+            console.log(
+              `📤 Sending new alert for ${bikeId} (last sent ${Math.round(
+                timeSinceLastSMS / 1000
+              )}s ago)`
+            );
+
             await firestore.collection("alerts").add({
               bikeId,
               type: "geofence_cross",
@@ -348,7 +332,7 @@ client.on("message", async (topic, message) => {
               violation_type: "GEOFENCE_EXIT",
             });
 
-            // await sendSMSAlert(bikeId, "geofence_cross");
+            await sendSMSAlert(bikeId, "geofence_cross");
 
             alertState.lastSMSSentAt = now;
             alertState.alertActive = true;
@@ -356,14 +340,25 @@ client.on("message", async (topic, message) => {
             alertState.insideCount = 0;
 
             console.log(`⏱️ Cooldown initiated for ${bikeId}: 5 minutes`);
+          } else {
+            const remaining = Math.max(0, alertState.cooldown - timeSinceLastSMS);
+            console.log(
+              `⏳ Bike ${bikeId} still in cooldown (${Math.round(
+                remaining / 1000
+              )}s remaining)`
+            );
           }
         } else {
+          console.log(`✅ Bike ${bikeId} inside geofence`);
           if (alertState.alertActive) {
             alertState.insideCount++;
+            console.log(`🔍 Inside confirmation ${alertState.insideCount}/3 for ${bikeId}`);
             if (alertState.insideCount >= 3) {
               alertState.alertActive = false;
               alertState.cooldown = 60 * 1000;
-              console.log(`✅ Bike ${bikeId} safely back inside geofence.`);
+              console.log(
+                `✅ Bike ${bikeId} confirmed safely inside. Cooldown reduced to 1 minute.`
+              );
             }
           }
         }
@@ -374,17 +369,18 @@ client.on("message", async (topic, message) => {
       }
     }
 
-    // ===== HANDLE MOVEMENT/CRASH ALERTS =====
+    // ===== HANDLE MOVEMENT/CRASH ALERTS WITH COOLDOWN =====
     if (topic === "esp32/alerts") {
       try {
         const data = JSON.parse(msg);
         const { bikeId, type } = data;
-
+        
         if (!["movement", "crash"].includes(type)) {
           console.log(`⚠️ Unknown alert type: ${type}`);
           return;
         }
 
+        // Initialize if doesn't exist
         if (!movementAlerts[bikeId]) {
           movementAlerts[bikeId] = { lastSent: 0 };
         }
@@ -392,26 +388,27 @@ client.on("message", async (topic, message) => {
         const now = Date.now();
         const timeSinceLast = now - movementAlerts[bikeId].lastSent;
 
+        // Check cooldown first
         if (timeSinceLast < CRASH_ALERT_COOLDOWN) {
-          console.log(`⏳ ${type} alert for ${bikeId} ignored (cooldown)`);
+          console.log(
+            `⏳ ${type} alert for ${bikeId} ignored (cooldown ${Math.round(
+              (CRASH_ALERT_COOLDOWN - timeSinceLast) / 1000
+            )}s left)`
+          );
           return;
         }
 
+        // Check if already processing (race condition prevention)
         if (alertProcessingLocks[bikeId]) {
-          console.log(`🔒 ${type} alert ignored (already processing)`);
+          console.log(`🔒 ${type} alert for ${bikeId} ignored (already processing another alert)`);
           return;
         }
 
+        // SET LOCK IMMEDIATELY - synchronously before any await
         alertProcessingLocks[bikeId] = true;
-        movementAlerts[bikeId].lastSent = now;
-
+        movementAlerts[bikeId].lastSent = now; // Update timestamp immediately too
+        
         console.log(`🚨 Processing ${type} alert from bike ${bikeId}`);
-
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: type === "crash" ? "OFFLINE" : "MAINTENANCE",
-          last_alert: type,
-          last_alert_time: admin.database.ServerValue.TIMESTAMP,
-        });
 
         // Update bike status in RTDB
         await rtdb.ref(`bikes/${bikeId}`).update({
@@ -432,6 +429,7 @@ client.on("message", async (topic, message) => {
           resolved: false,
         });
 
+        // Log to bike_alerts collection
         await firestore.collection("bike_alerts").add({
           bike_id: bikeId,
           alert_type: type,
@@ -441,15 +439,22 @@ client.on("message", async (topic, message) => {
           status: "PENDING",
         });
 
-        // await sendSMSAlert(bikeId, type);
+        // Send SMS alert
+        await sendSMSAlert(bikeId, type);
 
-        console.log(`📤 (TEST MODE) ${type} alert logged for ${bikeId}`);
-
+        console.log(`📤 ${type} SMS sent for ${bikeId}, cooldown started (2 min)`);
+        
+        // Release processing lock after completion
         setTimeout(() => {
           alertProcessingLocks[bikeId] = false;
-        }, 1000);
+        }, 1000); // 1 second buffer
+        
       } catch (alertError) {
         console.error("❌ Error processing alert:", alertError);
+        // Release lock on error
+        if (data?.bikeId) {
+          alertProcessingLocks[data.bikeId] = false;
+        }
       }
     }
   } catch (error) {
@@ -457,48 +462,17 @@ client.on("message", async (topic, message) => {
   }
 });
 
-// ==================== BIKE OFFLINE MONITOR ====================
-async function checkBikeStatus() {
-  const now = Date.now();
-
-  for (const [bikeId, lastSeen] of Object.entries(bikeLastSeen)) {
-    if (now - lastSeen > OFFLINE_TIMEOUT) {
-      console.log(`⚠️ Bike ${bikeId} is OFFLINE (no GPS in ${OFFLINE_TIMEOUT / 1000}s)`);
-
-      try {
-        await firestore.collection("bikes").doc(bikeId).update({
-          status: "OFFLINE",
-          updated_at: admin.firestore.FieldValue.serverTimestamp(),
-        });
-
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: "OFFLINE",
-          last_update: admin.database.ServerValue.TIMESTAMP,
-        });
-      } catch (err) {
-        console.error(`❌ Failed to update offline status for ${bikeId}:`, err);
-      }
-
-      delete bikeLastSeen[bikeId];
-    }
-  }
-}
-setInterval(checkBikeStatus, 5000);
-
 // ==================== EXPRESS API ENDPOINTS ====================
 
 // Health check
 app.get("/", (req, res) => {
-  res.send("✅ Node.js MQTT server is running (SMS disabled).");
+  res.send("✅ Node.js MQTT server is running.");
 });
 
 // Token generator
 function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
-
-// ... (rest of your API routes remain exactly the same below)
-
 
 app.get("/generate-token", async (req, res) => {
   const { bikeId, qrCode } = req.query;
@@ -705,6 +679,7 @@ app.post("/api/bikes/:bikeId/location", async (req, res) => {
       return res.status(400).json({ error: "Latitude and longitude are required" });
     }
 
+    // Update RTDB
     await rtdb.ref(`bikes/${bikeId}`).update({
       latitude: parseFloat(latitude),
       longitude: parseFloat(longitude),
@@ -713,6 +688,7 @@ app.post("/api/bikes/:bikeId/location", async (req, res) => {
       last_update: admin.database.ServerValue.TIMESTAMP,
     });
 
+    // Update Firestore
     const bikeRef = firestore.collection("bikes").doc(bikeId);
     await bikeRef.update({
       current_location: new admin.firestore.GeoPoint(
@@ -758,7 +734,7 @@ async function cleanupInactiveBikes() {
   try {
     const snapshot = await rtdb.ref("bikes").once("value");
     const now = Date.now();
-    const INACTIVE_THRESHOLD = 24 * 60 * 60 * 1000;
+    const INACTIVE_THRESHOLD = 24 * 60 * 60 * 1000; // 24 hours
 
     snapshot.forEach((childSnapshot) => {
       const bikeData = childSnapshot.val();
@@ -774,6 +750,7 @@ async function cleanupInactiveBikes() {
   }
 }
 
+// Run cleanup every hour
 setInterval(cleanupInactiveBikes, 60 * 60 * 1000);
 
 // ==================== START SERVER ====================

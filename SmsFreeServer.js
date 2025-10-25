@@ -109,10 +109,6 @@ const movementAlerts = {};
 const CRASH_ALERT_COOLDOWN = 2 * 60 * 1000; // 2 minutes
 const alertProcessingLocks = {}; // Prevent race conditions
 
-// ==================== PHILSMS CONFIG ====================
-const PHILSMS_API_TOKEN = "3186|RQCCqdWxPG9SuGOrqPvBdDoFIfeOmw0WqVDev9Vg";
-const PHILSMS_SENDER_ID = "PhilSMS";
-
 // ==================== BIKE HEARTBEAT TRACKER ====================
 const bikeLastSeen = {};
 const OFFLINE_TIMEOUT = 10 * 1000; // 10 seconds
@@ -413,14 +409,6 @@ client.on("message", async (topic, message) => {
           last_alert_time: admin.database.ServerValue.TIMESTAMP,
         });
 
-        // Update bike status in RTDB
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: type === "crash" ? "OFFLINE" : "MAINTENANCE",
-          last_alert: type,
-          last_alert_time: admin.database.ServerValue.TIMESTAMP,
-        });
-
-        // Log alert in Firestore
         await firestore.collection("alerts").add({
           bikeId,
           type,
