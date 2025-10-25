@@ -123,7 +123,7 @@ async function sendSMSAlert(bikeId, alertType = "geofence_cross") {
 
   let MESSAGE;
   if (alertType === "movement") {
-    MESSAGE = `[Sikad Advisory]: Bike ${bikeId} moved while parked. Ref#${randomTag}`;
+    MESSAGE = `Dude your bike ${bikeId} moved while parked, better check out the admin page. Ref#${randomTag}`;
   } else if (alertType === "crash") {
     MESSAGE = `#SikadAlert: Bike ${bikeId} crash detected while on ride! Ref#${randomTag}`;
   } else {
