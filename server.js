@@ -292,6 +292,25 @@ client.on("message", async (topic, message) => {
 
         console.log(`📍 Location history saved for ${bikeId}`);
 
+        const bikeDoc = await firestore.collection("bikes").doc(bikeId).get();
+        const bikeData = bikeDoc.data();
+
+        if (bikeData?.isActive && bikeData?.rentedBy && bikeData?.activeRideId) {
+          const rideId = bikeData.activeRideId;
+          const rideRef = firestore.collection("ride_logs").doc(rideId);
+
+          await rideRef.update({
+            points: admin.firestore.FieldValue.arrayUnion({
+              latitude: data.latitude,
+              longitude: data.longitude,
+              speed: data.speed || 0,
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            }),
+          });
+
+          console.log(`🗺️ Point added to ride log ${rideId} for bike ${bikeId}`);
+        }
+
         // ===== 4. CHECK GEOFENCE VIOLATIONS =====
         const point = turf.point([data.longitude, data.latitude]);
         const geofences = await getActiveGeofences();
@@ -328,31 +347,34 @@ client.on("message", async (topic, message) => {
           const timeSinceLastSMS = now - alertState.lastSMSSentAt;
 
           if (!alertState.alertActive && timeSinceLastSMS > alertState.cooldown) {
-            console.log(`📤 (TEST MODE) Geofence alert triggered for ${bikeId}`);
-            await firestore.collection("alerts").add({
-              bikeId,
-              type: "geofence_cross",
-              message: `Bike ${bikeId} exited geofence`,
-              timestamp: admin.firestore.FieldValue.serverTimestamp(),
-              resolved: false,
-            });
+          console.log(`📤 (TEST MODE) Geofence alert triggered for ${bikeId}`);
 
-            await firestore.collection("geofence_violations").add({
-              bike_id: bikeId,
-              location: new admin.firestore.GeoPoint(data.latitude, data.longitude),
-              timestamp: admin.firestore.FieldValue.serverTimestamp(),
-              violation_type: "GEOFENCE_EXIT",
-            });
+          // ✅ Start cooldown immediately before sending SMS
+          alertState.lastSMSSentAt = now;
+          alertState.alertActive = true;
+          alertState.cooldown = 5 * 60 * 1000;
+          alertState.insideCount = 0;
 
-             await sendSMSAlert(bikeId, "geofence_cross");
+          await firestore.collection("alerts").add({
+            bikeId,
+            type: "geofence_cross",
+            message: `Bike ${bikeId} exited geofence`,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            resolved: false,
+          });
 
-            alertState.lastSMSSentAt = now;
-            alertState.alertActive = true;
-            alertState.cooldown = 5 * 60 * 1000;
-            alertState.insideCount = 0;
+          await firestore.collection("geofence_violations").add({
+            bike_id: bikeId,
+            location: new admin.firestore.GeoPoint(data.latitude, data.longitude),
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            violation_type: "GEOFENCE_EXIT",
+          });
 
-            console.log(`⏱️ Cooldown initiated for ${bikeId}: 5 minutes`);
-          }
+          await sendSMSAlert(bikeId, "geofence_cross");
+
+          console.log(`⏱️ Cooldown initiated for ${bikeId}: 5 minutes`);
+        }
+
         } else {
           if (alertState.alertActive) {
             alertState.insideCount++;
@@ -371,83 +393,83 @@ client.on("message", async (topic, message) => {
     }
 
     // ===== HANDLE MOVEMENT/CRASH ALERTS =====
-    if (topic === "esp32/alerts") {
-      try {
-        const data = JSON.parse(msg);
-        const { bikeId, type } = data;
+if (topic === "esp32/alerts") {
+  try {
+    const data = JSON.parse(msg);
+    const { bikeId, type } = data;
 
-        if (!["movement", "crash"].includes(type)) {
-          console.log(`⚠️ Unknown alert type: ${type}`);
-          return;
-        }
-
-        if (!movementAlerts[bikeId]) {
-          movementAlerts[bikeId] = { lastSent: 0 };
-        }
-
-        const now = Date.now();
-        const timeSinceLast = now - movementAlerts[bikeId].lastSent;
-
-        if (timeSinceLast < CRASH_ALERT_COOLDOWN) {
-          console.log(`⏳ ${type} alert for ${bikeId} ignored (cooldown)`);
-          return;
-        }
-
-        if (alertProcessingLocks[bikeId]) {
-          console.log(`🔒 ${type} alert ignored (already processing)`);
-          return;
-        }
-
-        alertProcessingLocks[bikeId] = true;
-        movementAlerts[bikeId].lastSent = now;
-
-        console.log(`🚨 Processing ${type} alert from bike ${bikeId}`);
-
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: type === "crash" ? "OFFLINE" : "MAINTENANCE",
-          last_alert: type,
-          last_alert_time: admin.database.ServerValue.TIMESTAMP,
-        });
-
-        // Update bike status in RTDB
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: type === "crash" ? "OFFLINE" : "MAINTENANCE",
-          last_alert: type,
-          last_alert_time: admin.database.ServerValue.TIMESTAMP,
-        });
-
-        // Log alert in Firestore
-        await firestore.collection("alerts").add({
-          bikeId,
-          type,
-          message:
-            type === "movement"
-              ? `Movement detected while locked for bike ${bikeId}`
-              : `Crash detected while bike ${bikeId} was on ride`,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          resolved: false,
-        });
-
-        await firestore.collection("bike_alerts").add({
-          bike_id: bikeId,
-          alert_type: type,
-          latitude: data.latitude || null,
-          longitude: data.longitude || null,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-          status: "PENDING",
-        });
-
-        await sendSMSAlert(bikeId, type);
-
-        console.log(`📤 (TEST MODE) ${type} alert logged for ${bikeId}`);
-
-        setTimeout(() => {
-          alertProcessingLocks[bikeId] = false;
-        }, 1000);
-      } catch (alertError) {
-        console.error("❌ Error processing alert:", alertError);
-      }
+    if (!["movement", "crash"].includes(type)) {
+      console.log(`⚠️ Unknown alert type: ${type}`);
+      return;
     }
+
+    if (!movementAlerts[bikeId]) {
+      movementAlerts[bikeId] = { lastSent: 0 };
+    }
+
+    const now = Date.now();
+    const timeSinceLast = now - movementAlerts[bikeId].lastSent;
+
+    // 🔒 Skip if still within cooldown
+    if (timeSinceLast < CRASH_ALERT_COOLDOWN) {
+      console.log(`⏳ ${type} alert for ${bikeId} ignored (cooldown)`);
+      return;
+    }
+
+    // 🔒 Prevent concurrent processing
+    if (alertProcessingLocks[bikeId]) {
+      console.log(`🔒 ${type} alert ignored (already processing)`);
+      return;
+    }
+
+    // ✅ START COOLDOWN IMMEDIATELY upon receiving alert
+    alertProcessingLocks[bikeId] = true;
+    movementAlerts[bikeId].lastSent = now;
+
+    console.log(`🚨 Processing ${type} alert from bike ${bikeId}`);
+
+    // Update bike status in RTDB
+    await rtdb.ref(`bikes/${bikeId}`).update({
+      status: type === "crash" ? "OFFLINE" : "MAINTENANCE",
+      last_alert: type,
+      last_alert_time: admin.database.ServerValue.TIMESTAMP,
+    });
+
+    // Log alert in Firestore
+    await firestore.collection("alerts").add({
+      bikeId,
+      type,
+      message:
+        type === "movement"
+          ? `Movement detected while locked for bike ${bikeId}`
+          : `Crash detected while bike ${bikeId} was on ride`,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      resolved: false,
+    });
+
+    await firestore.collection("bike_alerts").add({
+      bike_id: bikeId,
+      alert_type: type,
+      latitude: data.latitude || null,
+      longitude: data.longitude || null,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      status: "PENDING",
+    });
+
+    // 📨 Send SMS (or test mode)
+    await sendSMSAlert(bikeId, type);
+
+    console.log(`📤 (TEST MODE) ${type} alert logged for ${bikeId}`);
+
+    // Release processing lock after 1s
+    setTimeout(() => {
+      alertProcessingLocks[bikeId] = false;
+    }, 1000);
+  } catch (alertError) {
+    console.error("❌ Error processing alert:", alertError);
+  }
+}
+
   } catch (error) {
     console.error("❌ Error handling MQTT message:", error);
   }
@@ -493,8 +515,6 @@ function generateToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-// ... (rest of your API routes remain exactly the same below)
-
 
 app.get("/generate-token", async (req, res) => {
   const { bikeId, qrCode } = req.query;
@@ -519,6 +539,7 @@ app.get("/generate-token", async (req, res) => {
 
   res.json({ token });
 });
+
 
 // Payment success endpoint
 app.get("/success", async (req, res) => {
