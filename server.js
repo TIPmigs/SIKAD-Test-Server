@@ -437,7 +437,7 @@ client.on("message", async (topic, message) => {
           status: "PENDING",
         });
 
-        // await sendSMSAlert(bikeId, type);
+        await sendSMSAlert(bikeId, type);
 
         console.log(`📤 (TEST MODE) ${type} alert logged for ${bikeId}`);
 
