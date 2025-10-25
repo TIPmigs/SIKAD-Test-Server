@@ -304,7 +304,7 @@ client.on("message", async (topic, message) => {
               latitude: data.latitude,
               longitude: data.longitude,
               speed: data.speed || 0,
-              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+              timestamp: new Date().toISOString(),
             }),
           });
 
