@@ -117,11 +117,7 @@ const PHILSMS_SENDER_ID = "PhilSMS";
 const bikeLastSeen = {};
 const OFFLINE_TIMEOUT = 10 * 1000; // 10 seconds
 
-// ==================== PHILSMS CONFIG ====================
-// const PHILSMS_API_TOKEN = "3186|RQCCqdWxPG9SuGOrqPvBdDoFIfeOmw0WqVDev9Vg";
-// const PHILSMS_SENDER_ID = "PhilSMS";
 
-/*
 async function sendSMSAlert(bikeId, alertType = "geofence_cross") {
   const randomTag = Math.floor(Math.random() * 1000);
 
@@ -221,7 +217,7 @@ async function sendSMSAlert(bikeId, alertType = "geofence_cross") {
     console.error("❌ Error sending SMS alert:", error);
   }
 }
-*/
+
 
 // ==================== SINGLE MQTT MESSAGE HANDLER ====================
 client.on("message", async (topic, message) => {
