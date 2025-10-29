@@ -354,13 +354,22 @@ client.on("message", async (topic, message) => {
           alertState.cooldown = 5 * 60 * 1000;
           alertState.insideCount = 0;
 
+          const bikeSnap = await firestore.collection("bikes").doc(bikeId).get();
+          const bikeData = bikeSnap.exists ? bikeSnap.data() : {};
+
           await firestore.collection("alerts").add({
             bikeId,
             type: "geofence_cross",
             message: `Bike ${bikeId} exited geofence`,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            resolved: false,
+
+            // ✅ Extra fields
+            rentalId: bikeData?.activeRideId || null,
+            zoneId: bikeData?.current_zone_id || null,
+            lastLat: data.latitude || bikeData?.current_location?.latitude || null,
+            lastLong: data.longitude || bikeData?.current_location?.longitude || null,
           });
+
 
           await firestore.collection("geofence_violations").add({
             bike_id: bikeId,
@@ -434,25 +443,26 @@ if (topic === "esp32/alerts") {
       last_alert_time: admin.database.ServerValue.TIMESTAMP,
     });
 
-    // Log alert in Firestore
+    // Retrieve bike data to get active ride, zone, and last location
+    const bikeSnap = await firestore.collection("bikes").doc(bikeId).get();
+    const bikeData = bikeSnap.exists ? bikeSnap.data() : {};
+
     await firestore.collection("alerts").add({
       bikeId,
       type,
       message:
-        type === "movement"
+        data.message ||
+        (type === "movement"
           ? `Movement detected while locked for bike ${bikeId}`
-          : `Crash detected while bike ${bikeId} was on ride`,
+          : `Crash detected while bike ${bikeId} was on ride`),
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       resolved: false,
-    });
 
-    await firestore.collection("bike_alerts").add({
-      bike_id: bikeId,
-      alert_type: type,
-      latitude: data.latitude || null,
-      longitude: data.longitude || null,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      status: "PENDING",
+      // ✅ Extra fields
+      rentalId: bikeData?.activeRideId || null,
+      zoneId: bikeData?.current_zone_id || null,
+      lastLat: data.latitude || bikeData?.current_location?.latitude || null,
+      lastLong: data.longitude || bikeData?.current_location?.longitude || null,
     });
 
     // 📨 Send SMS (or test mode)
@@ -588,7 +598,7 @@ app.get("/success", async (req, res) => {
     const rideId = rideRef.id;
 
     await firestore.collection("bikes").doc(bikeId).update({
-      status: "paid",
+      status: "IN_RENT",
       isActive: true,
       rentedBy: userId,
       activeRideId: rideId,
