@@ -102,7 +102,6 @@ async function getActiveGeofences() {
 
 // ==================== GEOFENCE CROSSING TRACKER WITH COOLDOWN ====================
 const geofenceCrossings = {};
-const CROSS_THRESHOLD = 3; // triggers alert after 3 crossings
 
 // ==================== MOVEMENT/CRASH ALERT TRACKER WITH COOLDOWN ====================
 const movementAlerts = {};
