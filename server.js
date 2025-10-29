@@ -719,66 +719,6 @@ app.post("/lockBike", async (req, res) => {
   }
 });
 
-// ==================== NEW API ENDPOINTS FOR BIKE LOCATION ====================
-
-// Manual bike location update
-app.post("/api/bikes/:bikeId/location", async (req, res) => {
-  try {
-    const { bikeId } = req.params;
-    const { latitude, longitude, speed, status } = req.body;
-
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: "Latitude and longitude are required" });
-    }
-
-    await rtdb.ref(`bikes/${bikeId}`).update({
-      latitude: parseFloat(latitude),
-      longitude: parseFloat(longitude),
-      speed: speed ? parseFloat(speed) : 0,
-      status: status || "AVAILABLE",
-      last_update: admin.database.ServerValue.TIMESTAMP,
-    });
-
-    const bikeRef = firestore.collection("bikes").doc(bikeId);
-    await bikeRef.update({
-      current_location: new admin.firestore.GeoPoint(
-        parseFloat(latitude),
-        parseFloat(longitude)
-      ),
-      status: status || "AVAILABLE",
-      updated_at: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    res.json({
-      success: true,
-      message: `Location updated for bike ${bikeId}`,
-    });
-  } catch (error) {
-    console.error("Error updating bike location:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get all bikes
-app.get("/api/bikes", async (req, res) => {
-  try {
-    const snapshot = await rtdb.ref("bikes").once("value");
-    const bikes = [];
-
-    snapshot.forEach((childSnapshot) => {
-      bikes.push({
-        bike_id: childSnapshot.key,
-        ...childSnapshot.val(),
-      });
-    });
-
-    res.json({ success: true, bikes });
-  } catch (error) {
-    console.error("Error fetching bikes:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // ==================== CLEANUP FUNCTION ====================
 async function cleanupInactiveBikes() {
   try {
