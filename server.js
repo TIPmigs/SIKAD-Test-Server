@@ -6,6 +6,8 @@ import crypto from "crypto";
 import * as turf from "@turf/turf";
 import fs from "fs";
 import fetch from "node-fetch";
+import dotenv from "dotenv";
+dotenv.config();
 
 // ==================== FIREBASE INIT ====================
 let serviceAccount;
@@ -109,8 +111,8 @@ const CRASH_ALERT_COOLDOWN = 2 * 60 * 1000; // 2 minutes
 const alertProcessingLocks = {}; // Prevent race conditions
 
 // ==================== PHILSMS CONFIG ====================
-const PHILSMS_API_TOKEN = "3186|RQCCqdWxPG9SuGOrqPvBdDoFIfeOmw0WqVDev9Vg";
-const PHILSMS_SENDER_ID = "PhilSMS";
+const PHILSMS_API_TOKEN = process.env.PHILSMS_API_TOKEN;
+const PHILSMS_SENDER_ID = process.env.PHILSMS_SENDER_ID;
 
 // ==================== BIKE HEARTBEAT TRACKER ====================
 const bikeLastSeen = {};
