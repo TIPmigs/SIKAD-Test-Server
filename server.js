@@ -241,15 +241,15 @@ client.on("message", async (topic, message) => {
         // ===== Record heartbeat =====
         bikeLastSeen[bikeId] = Date.now();
 
-        // Immediately mark as available
-        await firestore.collection("bikes").doc(bikeId).update({
-          status: "AVAILABLE",
-          updated_at: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        await rtdb.ref(`bikes/${bikeId}`).update({
-          status: "AVAILABLE",
-          last_update: admin.database.ServerValue.TIMESTAMP,
-        });
+        // // Immediately mark as available
+        // await firestore.collection("bikes").doc(bikeId).update({
+        //   status: "AVAILABLE",
+        //   updated_at: admin.firestore.FieldValue.serverTimestamp(),
+        // });
+        // await rtdb.ref(`bikes/${bikeId}`).update({
+        //   status: "AVAILABLE",
+        //   last_update: admin.database.ServerValue.TIMESTAMP,
+        // });
 
         // ===== 1. UPDATE FIREBASE RTDB =====
         await rtdb.ref(`bikes/${bikeId}`).update({
