@@ -116,7 +116,7 @@ const PHILSMS_SENDER_ID = process.env.PHILSMS_SENDER_ID;
 
 // ==================== BIKE HEARTBEAT TRACKER ====================
 const bikeLastSeen = {};
-const OFFLINE_TIMEOUT = 10 * 1000; // 10 seconds
+const OFFLINE_TIMEOUT = 60 * 1000; // 1 minute
 
 
 async function sendSMSAlert(bikeId, alertType = "geofence_cross") {
@@ -243,15 +243,32 @@ client.on("message", async (topic, message) => {
         // ===== Record heartbeat =====
         bikeLastSeen[bikeId] = Date.now();
 
-        // // Immediately mark as available
-        // await firestore.collection("bikes").doc(bikeId).update({
-        //   status: "AVAILABLE",
-        //   updated_at: admin.firestore.FieldValue.serverTimestamp(),
-        // });
-        // await rtdb.ref(`bikes/${bikeId}`).update({
-        //   status: "AVAILABLE",
-        //   last_update: admin.database.ServerValue.TIMESTAMP,
-        // });
+        bikeLastSeen[bikeId] = Date.now();
+
+        // ✅ Mark corresponding QR code as "available" when GPS fix received
+        try {
+          const qrSnapshot = await firestore
+            .collection("qr_codes")
+            .where("bike_id", "==", bikeId)
+            .limit(1)
+            .get();
+
+          if (!qrSnapshot.empty) {
+            const qrDoc = qrSnapshot.docs[0];
+            await firestore.collection("qr_codes").doc(qrDoc.id).update({
+              status: "available",
+              isActive: true,
+              lockedAt: null,
+              rentedBy: null,
+              updated_at: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            console.log(`✅ Updated qr_codes/${qrDoc.id} for ${bikeId} → available`);
+          } else {
+            console.warn(`⚠️ No QR code found for ${bikeId} when setting available`);
+          }
+        } catch (err) {
+          console.error(`❌ Failed to update QR code for ${bikeId} to available:`, err);
+        }
 
         // ===== 1. UPDATE FIREBASE RTDB =====
         await rtdb.ref(`bikes/${bikeId}`).update({
