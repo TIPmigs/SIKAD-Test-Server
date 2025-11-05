@@ -495,11 +495,40 @@ async function checkBikeStatus() {
       console.log(`⚠️ Bike ${bikeId} is OFFLINE (no GPS in ${OFFLINE_TIMEOUT / 1000}s)`);
 
       try {
+        // ==========================
+        // Update in "bikes" collection
+        // ==========================
         await firestore.collection("bikes").doc(bikeId).update({
           status: "OFFLINE",
           updated_at: admin.firestore.FieldValue.serverTimestamp(),
         });
 
+        // ==========================
+        // Update in "qr_codes" collection
+        // ==========================
+        const qrSnapshot = await firestore
+          .collection("qr_codes")
+          .where("bike_id", "==", bikeId)
+          .limit(1)
+          .get();
+
+        if (!qrSnapshot.empty) {
+          const qrDoc = qrSnapshot.docs[0];
+          await firestore.collection("qr_codes").doc(qrDoc.id).update({
+            status: "offline",
+            lockedAt: null,
+            rentedBy: null,
+            isActive: false,
+            updated_at: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          console.log(`✅ Updated qr_codes/${qrDoc.id} for ${bikeId} as offline`);
+        } else {
+          console.warn(`⚠️ No QR code found for ${bikeId}`);
+        }
+
+        // ==========================
+        // Update in Realtime Database
+        // ==========================
         await rtdb.ref(`bikes/${bikeId}`).update({
           status: "OFFLINE",
           last_update: admin.database.ServerValue.TIMESTAMP,
@@ -508,11 +537,14 @@ async function checkBikeStatus() {
         console.error(`❌ Failed to update offline status for ${bikeId}:`, err);
       }
 
+      // Remove from tracking
       delete bikeLastSeen[bikeId];
     }
   }
 }
+
 setInterval(checkBikeStatus, 5000);
+
 
 // ==================== EXPRESS API ENDPOINTS ====================
 
