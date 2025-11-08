@@ -356,7 +356,7 @@ client.on("message", async (topic, message) => {
             outsideCount: 0,       // consecutive outside count
             lastOutsideAt: 0,      // timestamp of last outside detection
             consecutiveWindow: 15 * 1000, // 15 seconds window between outs
-            urgentCooldown: 5 * 60 * 1000, // 5 minutes cooldown after URGENT
+            urgentCooldown: 2 * 60 * 1000, // 5 minutes cooldown after URGENT
           };
         }
 
