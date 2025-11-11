@@ -131,7 +131,7 @@ async function sendSMSAlert(bikeId, alertType = "geofence_cross", options = {}) 
   const urgentPrefix = options.urgent ? "[URGENT] " : "";
 
   if (alertType === "movement") {
-    MESSAGE = `${urgentPrefix}Dude your bike ${bikeId} moved while parked, better check out the admin page. Ref#${randomTag}`;
+    MESSAGE = `${urgentPrefix} bike ${bikeId} moved while parked, check the admin page. Ref#${randomTag}`;
   } else if (alertType === "crash") {
     MESSAGE = `${urgentPrefix}#SikadAlert: Bike ${bikeId} crash detected while on ride! Ref#${randomTag}`;
   } else {
@@ -351,125 +351,61 @@ client.on("message", async (topic, message) => {
         // Initialize state for bike if not present
         if (!geofenceCrossings[bikeId]) {
           geofenceCrossings[bikeId] = {
-            lastSMSSentAt: 0,      // timestamp of last SMS sent
-            alertActive: false,    // true when in cooldown after URGENT SMS
-            outsideCount: 0,       // consecutive outside count
-            lastOutsideAt: 0,      // timestamp of last outside detection
-            consecutiveWindow: 15 * 1000, // 15 seconds window between outs
-            urgentCooldown: 2 * 60 * 1000, // 5 minutes cooldown after URGENT
+            stage: 0, // 0=none, 1=first, 2=second, 3=urgent
+            lastSMSSentAt: 0,
+            insideFixCount: 0
           };
         }
 
         const state = geofenceCrossings[bikeId];
 
         if (!insideAny) {
-          // Bike is outside geofence
+          // Bike is outside the geofence
           client.publish(
             `esp32/cmd/${bikeId}`,
             JSON.stringify({ command: "alert", reason: "out_of_bounds" })
           );
 
-          // If we're currently in URGENT cooldown, skip processing until cooldown expires
-          if (state.alertActive) {
-            const timeSinceUrgent = now - state.lastSMSSentAt;
-            if (timeSinceUrgent < state.urgentCooldown) {
-              console.log(`⏳ Bike ${bikeId} is outside but in URGENT cooldown (${Math.round((state.urgentCooldown - timeSinceUrgent)/1000)}s left)`);
-              // keep outsideCount as-is or optionally increment but do not trigger new SMS
-              // we will not increment outsideCount further to avoid duplicate triggers
-              return;
-            } else {
-              // cooldown expired - allow new sequences
-              state.alertActive = false;
-              state.lastSMSSentAt = 0;
-              state.outsideCount = 0;
-              state.lastOutsideAt = 0;
-              console.log(`🔓 URGENT cooldown expired for ${bikeId}, allowing new sequences`);
-            }
+          state.insideFixCount = 0; // reset inside streak
+
+          const timeSinceLast = now - (state.lastSMSSentAt || 0);
+          const cooldown = state.stage < 2 ? 15 * 1000 : 2 * 60 * 1000; // 15s or 2min
+
+          if (timeSinceLast < cooldown) {
+            console.log(`⏳ ${bikeId} still in cooldown (${Math.round((cooldown - timeSinceLast)/1000)}s left)`);
+            geofenceCrossings[bikeId] = state;
+            return;
           }
 
-          // Are we within the consecutive window?
-          if (state.lastOutsideAt && (now - state.lastOutsideAt) <= state.consecutiveWindow) {
-            state.outsideCount = (state.outsideCount || 0) + 1;
-          } else {
-            // too long since last outside, start new sequence
-            state.outsideCount = 1;
-          }
+          state.stage += 1;
+          state.lastSMSSentAt = now;
 
-          state.lastOutsideAt = now;
-
-          console.log(`⚠️ Bike ${bikeId} outside geofence (sequence ${state.outsideCount})`);
-
-          // Only trigger SMS on the 3rd consecutive outside within the 15s window
-          if (state.outsideCount >= 3) {
-            const timeSinceLastSMS = now - (state.lastSMSSentAt || 0);
-            if (timeSinceLastSMS > state.urgentCooldown) {
-              console.log(`📤 URGENT Geofence alert triggered for ${bikeId} (3 consecutive outside events)`);
-
-              // Log Firestore alert
-              const bikeSnap = await firestore.collection("bikes").doc(bikeId).get();
-              const bikeDataForAlert = bikeSnap.exists ? bikeSnap.data() : {};
-
-              await firestore.collection("alerts").add({
-                bikeId,
-                type: "geofence_cross",
-                message: `Bike ${bikeId} exited geofence (URGENT)`,
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                // Extra fields
-                rentalId: bikeDataForAlert?.activeRideId || null,
-                zoneId: bikeDataForAlert?.current_zone_id || null,
-                lastLat: data.latitude || bikeDataForAlert?.current_location?.latitude || null,
-                lastLong: data.longitude || bikeDataForAlert?.current_location?.longitude || null,
-                urgent: true,
-              });
-
-              await firestore.collection("geofence_violations").add({
-                bike_id: bikeId,
-                location: new admin.firestore.GeoPoint(data.latitude, data.longitude),
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                violation_type: "GEOFENCE_EXIT_URGENT",
-              });
-
-              // Send URGENT SMS
-              await sendSMSAlert(bikeId, "geofence_cross", { urgent: true });
-
-              // Enter URGENT cooldown
-              state.lastSMSSentAt = now;
-              state.alertActive = true;
-              // keep outsideCount as-is or reset to avoid double triggers; we'll reset
-              state.outsideCount = 0;
-              state.lastOutsideAt = 0;
-
-              console.log(`⏱️ URGENT cooldown initiated for ${bikeId}: ${Math.round(state.urgentCooldown / 1000)} seconds`);
-            } else {
-              console.log(`⏳ URGENT recently sent for ${bikeId}; ignoring this sequence.`);
-            }
-          } else {
-            // not yet at 3 consecutive outs -> no SMS (only log & device alert was published)
-            // optionally we can record a lighter log in firestore (non-urgent), but per requirement, SMS occurs only on the 3rd
-            // nothing else to do here
+          if (state.stage === 1) {
+            await sendSMSAlert(bikeId, "geofence_cross");
+            console.log(`📤 Sent FIRST geofence warning for ${bikeId}`);
+          } else if (state.stage === 2) {
+            await sendSMSAlert(bikeId, "geofence_cross");
+            console.log(`📤 Sent SECOND geofence warning for ${bikeId}`);
+          } else if (state.stage >= 3) {
+            await sendSMSAlert(bikeId, "geofence_cross", { urgent: true });
+            console.log(`📤 Sent URGENT geofence warning for ${bikeId}`);
+            state.stage = 3; // lock at urgent
           }
 
           geofenceCrossings[bikeId] = state;
+
         } else {
           // Bike is inside a geofence
-          // Reset outside counters and, per requirement, reset alert state so new sequences can occur.
-          if (state.outsideCount !== 0 || state.lastOutsideAt !== 0) {
-            console.log(`✅ Bike ${bikeId} returned inside geofence. Resetting outside sequence/counters.`);
-          }
-
-          // Reset sequence data
-          state.outsideCount = 0;
-          state.lastOutsideAt = 0;
-
-          // If we were in an active URGENT cooldown, clear it — requirement said cooldown resets to active when bike re-enters geofence
-          if (state.alertActive) {
-            console.log(`🔄 Bike ${bikeId} re-entered geofence; clearing URGENT cooldown and re-arming alerts.`);
-            state.alertActive = false;
+          state.insideFixCount = (state.insideFixCount || 0) + 1;
+          if (state.insideFixCount >= 3) {
+            console.log(`✅ Bike ${bikeId} inside for 3 consecutive GPS fixes. Resetting warnings.`);
+            state.stage = 0;
             state.lastSMSSentAt = 0;
+            state.insideFixCount = 0;
           }
-
           geofenceCrossings[bikeId] = state;
         }
+
       } catch (parseError) {
         console.error(`❌ Error parsing GPS data for ${bikeId}:`, parseError);
       }
@@ -532,19 +468,16 @@ client.on("message", async (topic, message) => {
               : `Crash detected while bike ${bikeId} was on ride`),
           timestamp: admin.firestore.FieldValue.serverTimestamp(),
           resolved: false,
-          // Extra fields
           rentalId: bikeData?.activeRideId || null,
           zoneId: bikeData?.current_zone_id || null,
           lastLat: data.latitude || bikeData?.current_location?.latitude || null,
           lastLong: data.longitude || bikeData?.current_location?.longitude || null,
         });
 
-        // 📨 Send SMS (or test mode)
         await sendSMSAlert(bikeId, type);
 
         console.log(`📤 (TEST MODE) ${type} alert logged for ${bikeId}`);
 
-        // Release processing lock after 1s
         setTimeout(() => {
           alertProcessingLocks[bikeId] = false;
         }, 1000);
@@ -556,6 +489,7 @@ client.on("message", async (topic, message) => {
     console.error("❌ Error handling MQTT message:", error);
   }
 });
+
 
 // ==================== BIKE OFFLINE MONITOR ====================
 async function checkBikeStatus() {
